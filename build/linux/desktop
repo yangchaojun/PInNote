@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=PinNote
+Comment=A pin-note application
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/pin-note %u
+Terminal=false
+Type=Application
+Icon=pin-note
+Categories=Utility;
+StartupWMClass=pin-note
+
+ 
