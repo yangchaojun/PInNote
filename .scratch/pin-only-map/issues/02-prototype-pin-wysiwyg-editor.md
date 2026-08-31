@@ -19,7 +19,7 @@ Blocked by: 01
 
 ## Answer
 
-**结论：模型成立**（GO）。原型在 `prototype/wysiwyg-editor/`（分支 `prototype/tiptap-wysiwyg-editor`，pnpm 独立 workspace，不接 Wails/DB）：`pnpm test` 104 项往返/审计/守卫回归全绿；`pnpm dev` 沙盒在浏览器实测通过「打开即编辑 → 编辑 → 400ms 自动保存 → 事实源回写 → 重开一致」全链路。
+**结论：模型成立**（GO）。原型在 `prototype/wysiwyg-editor/`（分支 `prototype/tiptap-wysiwyg-editor`，pnpm 独立 workspace，不接 Wails/DB）：`pnpm test` 109 项往返/审计/守卫回归全绿；`pnpm dev` 沙盒在浏览器实测通过「打开即编辑 → 编辑 → 400ms 自动保存 → 事实源回写 → 重开一致」全链路。
 
 对 01 推荐的实测修正（5 条，全部有回归测试钉死）：
 
@@ -28,5 +28,13 @@ Blocked by: 01
 3. **守卫比较前归一化顶层空段落**（TrailingNode 尾段 / `&nbsp;` 噪声段 / 段间孤立空段都不携带内容）：逐结构 eq 会让「连按两次回车」这种最常见编辑永久拒写。不变式保数据，不保空行。
 4. **段落序列化转义行首块语法**（`SafeParagraph`）：官方 renderer 不转义 `## ` / `- ` / `1. ` 开头的段落文本，实测重开后段落变标题。
 5. **rawSource「转为可编辑」必须重过审计后再插回**：直接 `insertContent(markdown)` 会吞掉注释类内容（实测丢数据）；不安全的源就地保持降级态。
+
+6. **行内图片会被静默丢弃**：schema 无 Image 节点，`![alt](url)` 进 doc 时只剩 alt 文本——
+   doc 级相等看不见"进门前就丢"的内容。已从 token 类型门排除 image → 整块降级保数据；
+   是否引入 `@tiptap/extension-image` 归 ticket 03/06 产品决策。另验证：选中 rawSource 块后
+   粘贴 = 替换该块（正常 ProseMirror 选择语义，非 bug）。
+
+纯 Markdown 文本粘贴（01 §3 的 handlePaste 缺口）已补：`MarkdownPaste` 扩展，启发式识别
+且走同一审计装载器插入；复制输出以 `clipboardTextSerializer → getMarkdown` 覆盖。
 
 晋升判定：`src/lib/audit.ts`、`src/lib/rawSource.ts`、`SafeParagraph`（editorConfig.ts）与 `roundtrip.test.ts`+`fixtures.ts` 语料网可直接晋升为正式实现（纯函数 + 扩展配置，无沙盒依赖）；`App.tsx` 沙盒壳丢弃。input rules 原地转换（`# `/`- `/`- [ `）为 StarterKit 自带能力，自动化通道送不进逐键事件，留给 README 人工清单确认。

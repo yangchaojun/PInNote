@@ -32,7 +32,7 @@ Label: wayfinder:map
 
 - [TipTap × Markdown 往返能力调研](issues/01-research-tiptap-markdown-roundtrip.md) — **GO**：TipTap v3 + 官方 `@tiptap/markdown`（社区包已弃用）；往返覆盖全部所需 GFM 子集；不丢数据用 `rawSource` atom 块节点 + 保存时 `parse(serialize(doc)) ≡ doc` 守卫；序列化是规范化重写（Underline 需关闭）；复选框/粘贴路径均有官方扩展点。完整报告在 `research/tiptap-markdown-roundtrip` 分支 `docs/research/tiptap-markdown-roundtrip.md`。
 
-- [原型：pin 窗口整窗 WYSIWYG 编辑器](issues/02-prototype-pin-wysiwyg-editor.md) — **GO**：模型成立。原型在 `prototype/tiptap-wysiwyg-editor` 分支 `prototype/wysiwyg-editor/`（104 项回归全绿 + 浏览器实测）。对 01 的 5 条实测修正：审计需静态类型门+行为不动点双保险；装载按块 trim；守卫比较归一化顶层空段落；段落序列化转义行首块语法（SafeParagraph）；rawSource 转换必须重过审计。audit/rawSource/SafeParagraph/语料网可直接晋升。
+- [原型：pin 窗口整窗 WYSIWYG 编辑器](issues/02-prototype-pin-wysiwyg-editor.md) — **GO**：模型成立。原型在 `prototype/tiptap-wysiwyg-editor` 分支 `prototype/wysiwyg-editor/`（109 项回归全绿 + 浏览器实测）。对 01 的 6 条实测修正：审计需静态类型门+行为不动点双保险；装载按块 trim；守卫比较归一化顶层空段落；段落序列化转义行首块语法（SafeParagraph）；rawSource 转换必须重过审计；行内图片静默丢失→类型门排除（产品决策归 03/06）。audit/rawSource/SafeParagraph/语料网可直接晋升。
 
 ## Not yet specified
 
