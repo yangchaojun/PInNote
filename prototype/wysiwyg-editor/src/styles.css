@@ -1,0 +1,140 @@
+/* Rough styling on purpose — the ticket asks whether the EDITOR MODEL is
+ * viable, not what it should look like. */
+body {
+  margin: 0;
+  font-family: -apple-system, "Helvetica Neue", sans-serif;
+  background: #17171a;
+  color: #e6e6e6;
+}
+.sandbox {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 12px 16px;
+  box-sizing: border-box;
+  gap: 10px;
+}
+header h1 {
+  font-size: 16px;
+  margin: 0 0 6px;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.toolbar button {
+  background: #2c2c31;
+  color: #e6e6e6;
+  border: 1px solid #3d3d44;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.status {
+  font-size: 12px;
+  color: #9fd49f;
+}
+main {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.pane h2 {
+  font-size: 13px;
+  color: #9a9aa2;
+  margin: 0 0 4px;
+}
+.hint {
+  font-size: 12px;
+  color: #6f6f78;
+  margin: 4px 0;
+}
+.editor-scroll {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid #3d3d44;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #1d1d21;
+}
+.source {
+  flex: 1;
+  resize: none;
+  background: #1d1d21;
+  color: #c9d1d9;
+  border: 1px solid #3d3d44;
+  border-radius: 8px;
+  font: 12px/1.5 ui-monospace, monospace;
+  padding: 8px 12px;
+}
+
+/* TipTap v3 editor surface */
+.tiptap {
+  outline: none;
+  min-height: 100%;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.tiptap p.is-editor-empty:first-child::before {
+  content: "用 Markdown 记录…";
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: #6f6f78;
+}
+.tiptap h1, .tiptap h2, .tiptap h3 { line-height: 1.3; }
+.tiptap pre {
+  background: #111114;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.tiptap code { background: #111114; padding: 1px 4px; border-radius: 4px; }
+.tiptap blockquote {
+  border-left: 3px solid #4a4a52;
+  margin: 8px 0;
+  padding-left: 10px;
+  color: #b5b5bd;
+}
+.tiptap table { border-collapse: collapse; width: 100%; }
+.tiptap th, .tiptap td { border: 1px solid #3d3d44; padding: 4px 8px; }
+.tiptap ul[data-type="taskList"] { list-style: none; padding-left: 4px; }
+.tiptap ul[data-type="taskList"] li { display: flex; gap: 6px; align-items: baseline; }
+
+/* rawSource demotion block */
+.raw-source-block {
+  border: 1px dashed #7a5c2e;
+  background: #231d10;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 8px 0;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.raw-source-block pre {
+  flex: 1;
+  margin: 0;
+  white-space: pre-wrap;
+  font: 12px/1.5 ui-monospace, monospace;
+  color: #d8c08a;
+}
+.raw-source-block button {
+  background: #7a5c2e;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
