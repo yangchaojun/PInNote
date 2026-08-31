@@ -8,7 +8,7 @@
 ```sh
 cd prototype/wysiwyg-editor
 pnpm install
-pnpm test        # 104 个往返/审计/守卫测试（vitest + jsdom）
+pnpm test        # 109 个往返/审计/守卫测试（vitest + jsdom）
 pnpm dev         # http://localhost:5199 沙盒：左=编辑器，右=事实源 markdown
 ```
 
@@ -16,7 +16,8 @@ pnpm dev         # http://localhost:5199 沙盒：左=编辑器，右=事实源 
 
 - [ ] 键入 `# `、`- `、`- [ `、`**粗体**` —— 原地即时渲染（TipTap input rules，StarterKit 自带）
 - [ ] 编辑渲染后的内容，400ms 后右栏事实源同步更新且不变式通过
-- [ ] 粘贴富文本（真 Ctrl+V，或点「模拟富文本粘贴」）→ 右栏出现等价 Markdown
+- [ ] 真 Ctrl+V 粘贴富文本（或点「模拟富文本粘贴」）→ 右栏出现等价 Markdown
+- [ ] 真 Ctrl+V 粘贴纯 Markdown 文本 → 原地转成渲染内容（handlePaste 启发式，只处理无 HTML 的 text/plain）
 - [ ] 点击任务复选框 → 右栏 `- [ ]` ↔ `- [x]` 回写
 - [ ] 注释 / 链接定义等不可映射块 → 黄色虚线 rawSource 块原样保留；「转为可编辑」重新过审计，数据不丢
 

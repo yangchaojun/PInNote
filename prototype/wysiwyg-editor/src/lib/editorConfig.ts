@@ -9,12 +9,15 @@
  * editor configures RawSource with the "转为可编辑" callback while the
  * headless audit context does not.
  */
+import { Extension } from "@tiptap/core";
+import { Plugin } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { TaskList, TaskItem } from "@tiptap/extension-list";
 import { Table, TableRow, TableHeader, TableCell } from "@tiptap/extension-table";
 import { Markdown } from "@tiptap/markdown";
 import { Paragraph } from "@tiptap/extension-paragraph";
 import { RawSource, type RawSourceOptions } from "./rawSource";
+import { loadMarkdownLossless } from "./audit";
 
 /**
  * Paragraph text that happens to start with a markdown block intro (`#`,
@@ -46,6 +49,47 @@ const SafeParagraph = Paragraph.extend({
   },
 });
 
+/**
+ * Heuristic: does plain clipboard text carry markdown syntax worth
+ * interpreting? (research §3: the official package does not auto-convert
+ * text/plain pastes; a handlePaste hook is the documented gap.)
+ */
+export function looksLikeMarkdown(text: string): boolean {
+  return /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d{1,9}[.)]\s|>|```|\*\*|~~)|\[[^\]]*]\([^)]*\)/.test(text);
+}
+
+/**
+ * Paste as markdown → but through the SAME audit as opening a note (inserting
+ * via contentType:'markdown' directly would let the parse path silently drop
+ * what the loader would demote — see ticket 02 Answer #5).
+ */
+export const MarkdownPaste = Extension.create({
+  name: "markdownPaste",
+  addProseMirrorPlugins() {
+    const editor = this.editor;
+    return [
+      new Plugin({
+        props: {
+          handlePaste(_view, event) {
+            const dt = event.clipboardData;
+            if (!dt) return false;
+            const text = dt.getData("text/plain");
+            if (dt.getData("text/html") || !text || !looksLikeMarkdown(text)) return false;
+            if (!editor.markdown) return false;
+            const { doc } = loadMarkdownLossless(text, { manager: editor.markdown, schema: editor.schema });
+            editor
+              .chain()
+              .focus()
+              .insertContent(doc.toJSON().content ?? [])
+              .run();
+            return true;
+          },
+        },
+      }),
+    ];
+  },
+});
+
 export function createExtensions(rawSourceOptions: RawSourceOptions = {}) {
   return [
     StarterKit.configure({
@@ -63,5 +107,6 @@ export function createExtensions(rawSourceOptions: RawSourceOptions = {}) {
     TableCell,
     RawSource.configure(rawSourceOptions),
     Markdown,
+    MarkdownPaste,
   ];
 }

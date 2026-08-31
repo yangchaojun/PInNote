@@ -142,6 +142,7 @@ describe("literal markdown-looking text (SafeParagraph escaping)", () => {
   });
 });
 
+describe("blank paragraph handling (found in the browser sandbox)", () => {
   it("a lone blank paragraph between blocks does not wedge saving", () => {
     // Pressing Enter twice mid-note is the most common way to create this
     // shape; markdown cannot represent the blank line as content, so the
@@ -174,6 +175,7 @@ describe("literal markdown-looking text (SafeParagraph escaping)", () => {
     const guard = guardSaveRoundTrip(doc, ctx);
     expect(guard.ok, guard.error).toBe(true);
   });
+});
 
 describe("mixed task/bullet list split (research §1 pitfall 3)", () => {
   it("splits into adjacent lists yet stays a fixed point", () => {

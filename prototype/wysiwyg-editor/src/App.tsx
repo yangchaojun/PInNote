@@ -97,48 +97,68 @@ export function App() {
         onConvert: convert,
       }),
       content: "",
+      // Copies of editor content carry the markdown fact source, not the
+      // plain-text join (research §3).
+      editorProps: {
+        clipboardTextSerializer: (slice) => {
+          const ed = editorRef.current;
+          if (!ed?.markdown) return slice.content.textBetween(0, slice.content.size, "\n");
+          return ed.markdown.serialize({ type: "doc", content: slice.content.toJSON() } as never);
+        },
+      },
       onUpdate: ({ editor: ed }) => scheduleSave(ed),
     },
     [scheduleSave, convert],
   );
   editorRef.current = editor;
 
+  /** Open a note (initial load and the reopen-replay share this path). */
+  const loadIntoEditor = useCallback((md: string) => {
+    const ed = editorRef.current;
+    if (!ed) return 0;
+    const { doc, demoted } = loadMarkdownLossless(md, auditOf(ed));
+    ed.commands.command(({ tr }) => {
+      tr.replaceWith(0, ed.state.doc.content.size, doc.content);
+      return true;
+    });
+    return demoted.length;
+  }, []);
+
   // Initial open: load the demo note through the audit loader.
   useEffect(() => {
     if (!editor) return;
-    const { doc, demoted } = loadMarkdownLossless(sourceRef.current, auditOf(editor));
-    editor.commands.command(({ tr }) => {
-      tr.replaceWith(0, editor.state.doc.content.size, doc.content);
-      return true;
-    });
-    setReopenNote(`${demoted.length} 个块被降级为 rawSource（原样保留）`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor]);
+    const demoted = loadIntoEditor(sourceRef.current);
+    setReopenNote(`${demoted} 个块被降级为 rawSource（原样保留）`);
+  }, [editor, loadIntoEditor]);
 
   const reopen = useCallback(() => {
-    if (!editor) return;
-    const { doc, demoted } = loadMarkdownLossless(save.markdown, auditOf(editor));
-    editor.commands.command(({ tr }) => {
-      tr.replaceWith(0, editor.state.doc.content.size, doc.content);
-      return true;
-    });
+    const demotedCount = loadIntoEditor(save.markdown);
     setReopenNote(
-      demoted.length === 0
+      demotedCount === 0
         ? "重开完成：全部块可编辑"
-        : `重开完成：${demoted.length} 个块仍是 rawSource（与保存前一致）`,
+        : `重开完成：${demotedCount} 个块仍是 rawSource（与保存前一致）`,
     );
-  }, [editor, save.markdown]);
+  }, [save.markdown, loadIntoEditor]);
 
   const pasteRich = useCallback(() => {
     // Same pipeline a real rich-text paste takes: HTML → parseDOM → doc.
-    editorRef.current?.chain().focus().insertContent(PASTE_HTML_SAMPLE, { contentType: "html" }).run();
+    // focus("end"): without an explicit caret the selection can sit on a
+    // rawSource NodeSelection and the paste replaces it (measured).
+    editorRef.current?.chain().focus("end").insertContent(PASTE_HTML_SAMPLE, { contentType: "html" }).run();
   }, []);
 
   const insertMarkdownText = useCallback(() => {
-    // Plain-text markdown paste (needs the explicit contentType; research §3).
-    editorRef.current?.chain().focus().insertContent("1. 有序\n2. **带粗体**\n\n> 引用", { contentType: "markdown" }).run();
+    // Plain-text markdown paste (the handlePaste extension covers real
+    // Ctrl+V; this button demos the same audited insertion without clipboard
+    // access from automation).
+    const ed = editorRef.current;
+    if (!ed) return;
+    const { doc } = loadMarkdownLossless("1. 有序\n2. **带粗体**\n\n> 引用", auditOf(ed));
+    ed.chain().focus("end").insertContent(doc.toJSON().content ?? []).run();
   }, []);
 
+  // `save` is the recompute tick: doc children can only change what we show
+  // here after an update, and updates are what move `save`.
   const stats = useMemo(() => {
     const rawBlocks = editor ? editor.state.doc.children.filter((c) => c.type.name === "rawSource").length : 0;
     return { rawBlocks };

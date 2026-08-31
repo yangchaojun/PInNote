@@ -27,21 +27,23 @@ export interface AuditContext {
 }
 
 /**
- * Top-level block types the editor understands. A parse result containing
- * anything else means data left the model (the silent-drop failure mode).
+ * Top-level block types the editor understands — derived from the schema so
+ * the gate can't drift when the extension set changes. A parse result
+ * containing anything else means data left the model (the silent-drop
+ * failure mode).
  */
-const KNOWN_TOP_LEVEL_BLOCKS = new Set([
-  "paragraph",
-  "heading",
-  "bulletList",
-  "orderedList",
-  "taskList",
-  "blockquote",
-  "codeBlock",
-  "table",
-  "horizontalRule",
-  "rawSource",
-]);
+const knownTopLevelCache = new WeakMap<Schema, Set<string>>();
+function knownTopLevelBlocks(ctx: AuditContext): Set<string> {
+  let cached = knownTopLevelCache.get(ctx.schema);
+  if (!cached) {
+    cached = new Set<string>();
+    for (const [name, type] of Object.entries(ctx.schema.nodes)) {
+      if (type.spec.group?.includes("block")) cached.add(name);
+    }
+    knownTopLevelCache.set(ctx.schema, cached);
+  }
+  return cached;
+}
 
 export interface BlockAudit {
   raw: string;
@@ -82,7 +84,10 @@ const SAFE_TOKEN_TYPES = new Set([
   "br",
   "del",
   "link",
-  "image",
+  // NOTE: "image" deliberately NOT allowed — the schema has no Image node
+  // and the parse silently drops it down to its alt text (measured:
+  // `see ![alt](url)` → `see alt`). Demotion to rawSource is the safe home
+  // until ticket 03/06 decides whether to add @tiptap/extension-image.
   "checkbox", // GFM task markers inside mixed lists (@tiptap tokenizer → taskItem.checked)
 ]);
 
@@ -133,7 +138,7 @@ export function auditBlock(raw: string, ctx: AuditContext): BlockAudit {
       return { raw, ok: false, reason: "parsed to empty document (content would be dropped)" };
     }
     for (const child of children) {
-      if (!child.type || !KNOWN_TOP_LEVEL_BLOCKS.has(child.type)) {
+      if (!child.type || !knownTopLevelBlocks(ctx).has(child.type)) {
         return { raw, ok: false, reason: `unknown top-level node type "${child.type}"` };
       }
     }

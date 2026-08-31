@@ -52,6 +52,7 @@ export const SAFE_FIXTURES: Fixture[] = [
   { name: "table with pipe in code", md: "| a | b |\n|---|---|\n| `x \\| y` | 2 |" },
   { name: "table task cell", md: "| done | item |\n|---|---|\n| - [x] | task |" },
   { name: "multiblock doc", md: "# T\n\nintro\n\n- [ ] a\n- [x] b\n\n```\ncode\n```\n\n> quote\n\n| h |\n|---|\n| v |" },
+  { name: "hard break (two trailing spaces)", md: "line1  \nline2" },
   { name: "cjk content", md: "# 中文标题\n\n**加粗** 与 *斜体* 混排\n\n- [ ] 任务项\n- [x] 已完成" },
   { name: "empty", md: "" },
 ];
@@ -82,11 +83,15 @@ export const NORMALIZED_FIXTURES: Fixture[] = [
 //   fixed point -> behaviorally demoted to rawSource. Data-safe, not editable.
 // - unclosed fence: parses to a codeBlock and gains its closing fence on
 //   save -> normalization, not loss.
+// - inline images: silently dropped to alt text by the parse (doc-level eq
+//   cannot see loss that happens before the doc) → token gate rejects →
+//   rawSource. Product decision (add Image extension?) deferred to ticket 03/06.
 // - "text[^1]" footnotes: marked has no footnote token; survives as literal
 //   text with added backslash escapes -> normalization (remark would render a
 //   real footnote: cross-renderer semantic drift, zero data loss).
 LOSSY_FIXTURES.push(
   { name: "backtick-adjacent codespan", md: "`` special `code` ``" },
+  { name: "inline image (no Image node in schema)", md: "see ![alt text](https://example.com/a.png) here" },
 );
 NORMALIZED_FIXTURES.push(
   { name: "unclosed fence gains closer", md: "```js\nconst a = 1;\nno closing fence\n" },
