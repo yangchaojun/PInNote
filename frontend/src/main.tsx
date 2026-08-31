@@ -18,6 +18,7 @@ unstableSetRender((node, container) => {
 });
 import "./style.css";
 import { App } from "./App";
+import { useThemeStore } from "./theme";
 
 // The pinned-note window UI is only rendered in windows created for a pinned
 // note; the main window never loads its code.
@@ -44,22 +45,29 @@ function RouteRoot() {
   return <App />;
 }
 
+function ThemedRoot() {
+  const theme = useThemeStore((s) => s.theme);
+  return (
+    <ConfigProvider
+      locale={zhCN}
+      theme={{
+        algorithm: theme === "dark" ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+        token: {
+          colorPrimary: "#6f8ffa",
+          borderRadius: 8,
+          fontSize: 13,
+        },
+      }}
+    >
+      <RouteRoot />
+    </ConfigProvider>
+  );
+}
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <ConfigProvider
-        locale={zhCN}
-        theme={{
-          algorithm: antdTheme.darkAlgorithm,
-          token: {
-            colorPrimary: "#6f8ffa",
-            borderRadius: 8,
-            fontSize: 13,
-          },
-        }}
-      >
-        <RouteRoot />
-      </ConfigProvider>
+      <ThemedRoot />
     </QueryClientProvider>
   </StrictMode>,
 );

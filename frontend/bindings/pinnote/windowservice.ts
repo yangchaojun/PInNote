@@ -33,3 +33,16 @@ export function FocusMainWindow(): $CancellablePromise<void> {
 export function OpenPinnedWindow(noteID: string): $CancellablePromise<boolean> {
     return $Call.ByID(1338467543, noteID);
 }
+
+/**
+ * SetTheme records the frontend theme and repaints the native backdrop of
+ * every open window so the uncovered/under-construction window surface matches.
+ * Called by the frontend at startup and whenever the theme toggles.
+ */
+export function SetTheme(mode: string): $CancellablePromise<void> {
+    return $Call.ByID(2230333288, mode);
+}
+
+export function Theme(): $CancellablePromise<string> {
+    return $Call.ByID(1560765270);
+}

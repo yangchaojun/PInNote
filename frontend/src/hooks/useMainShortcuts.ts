@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import * as md from "../lib/markdown";
 import { useUIStore } from "../store";
+import { useThemeStore } from "../theme";
 
 /**
  * Registers the main window's keyboard shortcuts. Returns nothing; mount once
@@ -49,6 +50,9 @@ export function useMainShortcuts(handlers: {
       } else if (mod && e.shiftKey && e.key.toLowerCase() === "t") {
         e.preventDefault();
         ui.setView(ui.view === "trash" ? "notes" : "trash");
+      } else if (mod && e.shiftKey && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        useThemeStore.getState().toggleTheme();
       } else if (mod && e.shiftKey && e.key === "/") {
         e.preventDefault();
         ui.setShortcutsOpen(!ui.shortcutsOpen);

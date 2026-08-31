@@ -1,4 +1,59 @@
-/* PinNote — dark, minimal, keyboard-first. */
+/* PinNote — minimal, keyboard-first, light/dark themes via CSS variables. */
+
+:root {
+  /* Dark theme (default) */
+  --text: #e6e6e8;
+  --text-soft: #c3c4c9;
+  --title: #cfd0d4;
+  --secondary: #9a9ba1;
+  --dim: #7c7d84;
+  --bg-top: #17181b;
+  --bg-bottom: #1a1b1f;
+  --border: #26272c;
+  --border-soft: #232428;
+  --hover: #232429;
+  --active: #2c3143;
+  --accent: #8fa4f7;
+  --rule: #2c2d33;
+  --code-bg: #26272c;
+  --pre-bg: #212226;
+  --quote-border: #3d4573;
+  --quote-color: #aeb0b6;
+  --table-border: #33343a;
+  --kbd-border: #3a3b40;
+  --kbd-bg: #26272b;
+  --kbd-color: #cfd0d4;
+  --pin-bg: rgba(30, 31, 34, 0.97);
+  --pin-ring: rgba(255, 255, 255, 0.06);
+  --scroll-thumb: #33343a;
+}
+
+html[data-theme="light"] {
+  --text: #1f2329;
+  --text-soft: #3d4350;
+  --title: #30343c;
+  --secondary: #6b7078;
+  --dim: #8a8f98;
+  --bg-top: #f7f8fa;
+  --bg-bottom: #f2f3f6;
+  --border: #e3e5e9;
+  --border-soft: #e9eaee;
+  --hover: #eceef1;
+  --active: #e1e7fa;
+  --accent: #4c66c9;
+  --rule: #e0e2e7;
+  --code-bg: #eef0f3;
+  --pre-bg: #edeff2;
+  --quote-border: #aab8e8;
+  --quote-color: #5f6672;
+  --table-border: #dcdfe4;
+  --kbd-border: #d4d7dc;
+  --kbd-bg: #f2f3f5;
+  --kbd-color: #4a4f57;
+  --pin-bg: rgba(250, 250, 251, 0.97);
+  --pin-ring: rgba(0, 0, 0, 0.08);
+  --scroll-thumb: #c9ccd2;
+}
 
 * {
   box-sizing: border-box;
@@ -13,20 +68,20 @@ body,
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue",
     "Microsoft YaHei", sans-serif;
   background: transparent;
-  color: #e6e6e8;
+  color: var(--text);
 }
 
 kbd {
   display: inline-block;
   padding: 1px 6px;
   margin: 0 2px;
-  border: 1px solid #3a3b40;
+  border: 1px solid var(--kbd-border);
   border-bottom-width: 2px;
   border-radius: 5px;
-  background: #26272b;
+  background: var(--kbd-bg);
   font-family: inherit;
   font-size: 12px;
-  color: #cfd0d4;
+  color: var(--kbd-color);
 }
 
 /* ---------- Main window layout ---------- */
@@ -35,7 +90,7 @@ kbd {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: linear-gradient(180deg, #17181b 0%, #1a1b1f 100%);
+  background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
 }
 
 .titlebar-drag {
@@ -68,7 +123,7 @@ kbd {
   width: 250px;
   flex: none;
   overflow-y: auto;
-  border-right: 1px solid #26272c;
+  border-right: 1px solid var(--border);
   padding: 4px 6px 12px;
 }
 
@@ -91,7 +146,7 @@ kbd {
 }
 
 .pin-icon {
-  color: #8fa4f7;
+  color: var(--accent);
   font-size: 11px;
 }
 
@@ -107,11 +162,11 @@ kbd {
 }
 
 .note-item:hover {
-  background: #232429;
+  background: var(--hover);
 }
 
 .note-item.active {
-  background: #2c3143;
+  background: var(--active);
 }
 
 .note-item-title {
@@ -126,7 +181,7 @@ kbd {
 .note-item-meta {
   flex: none;
   font-size: 11px;
-  color: #7c7d84;
+  color: var(--dim);
 }
 
 .note-list-empty {
@@ -146,7 +201,7 @@ kbd {
   align-items: center;
   gap: 2px;
   padding: 2px 8px;
-  border-bottom: 1px solid #232428;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .editor-toolbar-spacer {
@@ -160,7 +215,7 @@ kbd {
 }
 
 .editor-body.split .editor-textarea {
-  border-right: 1px solid #232428;
+  border-right: 1px solid var(--border-soft);
 }
 
 .editor-textarea,
@@ -204,7 +259,7 @@ kbd {
 
 .markdown-body h1 {
   font-size: 1.5em;
-  border-bottom: 1px solid #2c2d33;
+  border-bottom: 1px solid var(--rule);
   padding-bottom: 0.25em;
 }
 
@@ -215,7 +270,7 @@ kbd {
 .markdown-body code {
   padding: 2px 5px;
   border-radius: 5px;
-  background: #26272c;
+  background: var(--code-bg);
   font-family: "SF Mono", Menlo, Consolas, monospace;
   font-size: 0.9em;
 }
@@ -223,7 +278,7 @@ kbd {
 .markdown-body pre {
   padding: 12px 14px;
   border-radius: 8px;
-  background: #212226;
+  background: var(--pre-bg);
   overflow-x: auto;
 }
 
@@ -235,8 +290,8 @@ kbd {
 .markdown-body blockquote {
   margin: 0.6em 0;
   padding: 0.1em 0 0.1em 1em;
-  border-left: 3px solid #3d4573;
-  color: #aeb0b6;
+  border-left: 3px solid var(--quote-border);
+  color: var(--quote-color);
 }
 
 .markdown-body table {
@@ -246,7 +301,7 @@ kbd {
 
 .markdown-body th,
 .markdown-body td {
-  border: 1px solid #33343a;
+  border: 1px solid var(--table-border);
   padding: 5px 12px;
 }
 
@@ -263,12 +318,12 @@ kbd {
 }
 
 .markdown-body a {
-  color: #8fa4f7;
+  color: var(--accent);
 }
 
 .markdown-body hr {
   border: none;
-  border-top: 1px solid #2c2d33;
+  border-top: 1px solid var(--rule);
 }
 
 /* ---------- Editor empty state ---------- */
@@ -286,12 +341,12 @@ kbd {
 .editor-empty-title {
   font-size: 22px;
   font-weight: 600;
-  color: #cfd0d4;
+  color: var(--title);
   margin: 0;
 }
 
 .editor-empty-hint {
-  color: #7c7d84;
+  color: var(--dim);
   font-size: 13px;
   margin: 0;
   line-height: 2;
@@ -339,8 +394,8 @@ kbd {
   height: 100vh;
   border-radius: 10px;
   overflow: hidden;
-  background: rgba(30, 31, 34, 0.97);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  background: var(--pin-bg);
+  box-shadow: 0 0 0 1px var(--pin-ring);
 }
 
 .pin-header {
@@ -360,7 +415,7 @@ kbd {
 }
 
 .pin-header-icon {
-  color: #8fa4f7;
+  color: var(--accent);
   font-size: 12px;
 }
 
@@ -368,7 +423,7 @@ kbd {
   flex: 1;
   min-width: 0;
   font-size: 12px;
-  color: #9a9ba1;
+  color: var(--secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -395,14 +450,14 @@ kbd {
   border: none;
   outline: none;
   background: transparent;
-  color: #e6e6e8;
+  color: var(--text);
   font-size: 13px;
   line-height: 1.7;
   font-family: inherit;
 }
 
 .pin-hint {
-  color: #7c7d84;
+  color: var(--dim);
   font-size: 12px;
 }
 
@@ -430,7 +485,7 @@ kbd {
 
 .shortcut-desc {
   font-size: 13px;
-  color: #c3c4c9;
+  color: var(--text-soft);
 }
 
 /* Scrollbars */
@@ -440,7 +495,7 @@ kbd {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #33343a;
+  background: var(--scroll-thumb);
   border-radius: 4px;
 }
 

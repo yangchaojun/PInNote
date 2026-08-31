@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Button, Input, Segmented, Tooltip } from "antd";
 import {
   DeleteOutlined,
+  MoonOutlined,
   PushpinOutlined,
   QuestionCircleOutlined,
   ReloadOutlined,
   SearchOutlined,
+  SunOutlined,
   PlusOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,6 +19,7 @@ import { ShortcutsModal } from "./components/ShortcutsModal";
 import { useMainShortcuts } from "./hooks/useMainShortcuts";
 import * as api from "./lib/api";
 import { useUIStore } from "./store";
+import { useThemeStore } from "./theme";
 
 const AUTOSAVE_DELAY_MS = 400;
 
@@ -31,6 +34,8 @@ export function App() {
     setView,
     setShortcutsOpen,
   } = useUIStore();
+  const theme = useThemeStore((s) => s.theme);
+  const toggleTheme = useThemeStore((s) => s.toggleTheme);
 
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
@@ -198,6 +203,14 @@ export function App() {
             disabled={!activeNote}
             danger
             onClick={() => trashMutation.mutate(activeNote!.id)}
+            tabIndex={-1}
+          />
+        </Tooltip>
+        <Tooltip title={theme === "dark" ? "切换到亮色主题 (⌘⇧D)" : "切换到暗色主题 (⌘⇧D)"}>
+          <Button
+            type="text"
+            icon={theme === "dark" ? <SunOutlined /> : <MoonOutlined />}
+            onClick={toggleTheme}
             tabIndex={-1}
           />
         </Tooltip>

@@ -28,10 +28,58 @@ func (h *appHandle) emit(name string, data any) {
 // and one frameless always-on-top window per pinned note.
 type WindowService struct {
 	handle *appHandle
+
+	mu    sync.Mutex
+	theme string // "light" or "dark"; drives native window background colours.
 }
 
 func NewWindowService(h *appHandle) *WindowService {
-	return &WindowService{handle: h}
+	return &WindowService{handle: h, theme: "dark"}
+}
+
+func (s *WindowService) Theme() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.theme
+}
+
+// mainBackground / pinBackground return the native window backdrop colours for
+// the current theme. They mirror the frontend's --bg-top and --pin-bg values.
+func (s *WindowService) mainBackground() application.RGBA {
+	if s.Theme() == "light" {
+		return application.NewRGBA(0xf7, 0xf8, 0xfa, 0xff)
+	}
+	return application.NewRGB(0x16, 0x17, 0x1a)
+}
+
+func (s *WindowService) pinBackground() application.RGBA {
+	if s.Theme() == "light" {
+		return application.NewRGBA(0xfa, 0xfa, 0xfb, 0xf2)
+	}
+	return application.NewRGBA(0x1e, 0x1f, 0x22, 0xf2)
+}
+
+// SetTheme records the frontend theme and repaints the native backdrop of
+// every open window so the uncovered/under-construction window surface matches.
+// Called by the frontend at startup and whenever the theme toggles.
+func (s *WindowService) SetTheme(mode string) error {
+	if s.handle.app == nil {
+		return fmt.Errorf("application not ready")
+	}
+	if mode != "light" && mode != "dark" {
+		return fmt.Errorf("unknown theme %q", mode)
+	}
+	s.mu.Lock()
+	s.theme = mode
+	s.mu.Unlock()
+	for _, win := range s.handle.app.Window.GetAll() {
+		if win.Name() == "main" {
+			win.SetBackgroundColour(s.mainBackground())
+		} else {
+			win.SetBackgroundColour(s.pinBackground())
+		}
+	}
+	return nil
 }
 
 // PinnedWindowName returns the internal window name for a pinned note.
@@ -61,7 +109,7 @@ func (s *WindowService) OpenPinnedWindow(noteID string) (bool, error) {
 		Frameless:       true,
 		AlwaysOnTop:     true,
 		URL:             "/#/pin/" + noteID,
-		BackgroundColour: application.NewRGBA(0x1e, 0x1f, 0x22, 0xf2),
+		BackgroundColour: s.pinBackground(),
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar: true,
 		},

@@ -1,4 +1,5 @@
 import * as bindings from "../../bindings/pinnote";
+import { Call } from "@wailsio/runtime";
 
 export interface Note {
   id: string;
@@ -71,6 +72,18 @@ export function closePinnedWindow(id: string): Promise<void> {
 
 export function focusMainWindow(): Promise<void> {
   return windows.FocusMainWindow() as Promise<void>;
+}
+
+/**
+ * Syncs the theme to the native window backdrops. Called via Call.ByName with
+ * the method's fully-qualified name (reflect PkgPath "main" + type + method,
+ * matching the hashes in the generated bindings) because
+ * SetTheme postdates the checked-in generated bindings and the wails3 CLI is
+ * not available to regenerate them. Best-effort: outside the Wails runtime
+ * (plain browser dev) the call rejects.
+ */
+export function setTheme(mode: "light" | "dark"): Promise<void> {
+  return Call.ByName("main.WindowService.SetTheme", mode).then(() => undefined);
 }
 
 /** Days left before a trashed note is permanently purged. */
