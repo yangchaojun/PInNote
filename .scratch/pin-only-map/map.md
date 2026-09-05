@@ -36,10 +36,15 @@ Label: wayfinder:map
 
 - [Pin 窗口交互与窗口规格](issues/03-grilling-pin-window-interaction-spec.md) — **定稿**（2026-09-05）。窗口：380 宽 / 高默认 300 最小 150 无上限，自适应增高移除；frameless resize 走 macOS 原生 frame（`Titled|Resizable` 保留，Wails JS 热区仅 Windows/Linux 不可用），实现首步实测、备 CSS 手柄 + `SetSize` 回退，补 `MinHeight: 150`；正文内部滚动 + 细覆盖滚动条。标题：首行即标题（增强现有 `deriveTitle`：剥复选框前缀与行内记号，其余沿用），header 平时不显示、悬停 tooltip。Header 只留 [图钉图标 | 拖拽区 | 关闭]。快捷键：`⌘⌥N`、`⌘B/I/K`、`⌘⇧D`、`⌘⌫`（删除唯一入口，连带关窗）、`⌘⇧/` 帮助；`⌘W`/块格式键/主面板遗留键全部不保留。placeholder「记点什么…」。行内图片本期不支持（rawSource 降级保数据，存储方案另提 ticket）。**修订 Q5(b)**：删除/主题不进 header，仅快捷键 + 菜单栏。
 
+- [笔记生命周期](issues/04-grilling-note-lifecycle-spec.md) — **定稿**（2026-09-05，grilling 未应答、按推荐项落定，可推翻）。关窗 = Stickies 式收起：**启动恢复所有 live 笔记窗口**（不再按 pinned 过滤），固定/取消固定概念退役（`Pinned` 字段与 `SetPinned` 后端冻结）；空笔记（content 空白）关窗即硬删；自动保存 400ms debounce + 失焦/动作/beforeunload 三层 flush；主题迁移 Go 侧持久化（`GetTheme`/`SetTheme` 单一事实源，localStorage 方案废弃）；存量未固定笔记被"恢复全部"消解，无需迁移；退出驻留行为不变。
+
+- [主面板移除影响清单](issues/05-grilling-main-panel-removal-impact.md) — **定稿**（2026-09-05）。逐文件改动地图：前端删 App/NoteList/TrashView/Editor/MarkdownView/useMainShortcuts（换 usePinShortcuts），重写 PinWindow（WYSIWYG + 新 header + flush）与 theme.ts（Go 单一事实源）；Go 删主窗口/mainBackground/FocusMainWindow，⌘⌥N 改道 CreateNote→OpenPinnedWindow（`app:new-note` 消亡），restoreAllNoteWindows 恢复全部 live，新增 DiscardIfEmpty/settings 表/菜单栏，冻结 SetPinned 等回收站 API；`notes:changed` 同步语义保留；原型 109 项语料进前端 vitest。
+
+- [可执行 spec 合成](issues/06-synthesize-execution-spec.md) — **完成**（2026-09-05）。产出 [spec.md](spec.md)（含 13 条验收标准）+ CONTEXT.md 术语更新 + ADR-0001/0002；01 research 不并入（关键结论已内联 spec §2，报告标注为必读附件）。**Map Destination 达成。**
+
 ## Not yet specified
 
-- 多个 pin 窗口间的同步语义（`notes:changed` 广播 + react-query invalidation）在纯 pin 形态下是否需要调整。
-- README / 快捷键帮助模态框在改造后如何重写（交互集合已由 03 定稿，归 05 影响清单 / 06 spec 落地）。
+- 无。执行期的两个实现级事项已写入 spec（resize 原生路径实测 §1.2；`setTheme` binding 形式随 wails3 CLI 可用性定）。
 
 ## Out of scope
 
@@ -47,3 +52,8 @@ Label: wayfinder:map
 - 回收站 UI（恢复 / 彻底删除入口）；仅保留 60 天自动 purge 后台逻辑。
 - 悬浮格式工具条（SelectionToolbar）——先看用户反馈。
 - Windows/Linux 平台行为差异（当前仅 macOS 交付形态）。
+- 行内图片支持（03 定稿：存储方案未定前不引入，另提 ticket）。
+
+## Destination 达成
+
+**2026-09-05：全部 6 张工单 resolved，可执行 spec 在 [spec.md](spec.md)，无剩余决策。** 后续工作为按 spec 开工实现（4 个提交建议：编辑器晋升 → pin 窗口重写 → Go 侧改造 → 文档与测试），不再经过本 map。
