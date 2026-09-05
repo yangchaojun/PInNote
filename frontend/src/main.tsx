@@ -5,6 +5,7 @@ import { ConfigProvider, theme as antdTheme } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import "./style.css";
 import { PinWindow } from "./PinWindow";
+import { TrayPanel } from "./TrayPanel";
 import { initTheme, useTheme } from "./theme";
 
 // The pin window is the app's only UI: every route is a pinned note.
@@ -19,7 +20,14 @@ const queryClient = new QueryClient({
 function Root() {
   const theme = useTheme();
   const match = window.location.hash.match(/^#\/pin\/([0-9a-f]+)$/);
-  if (!match) return null;
+  // Two windows share this bundle: pin windows render their note, the tray
+  // panel (route /#/panel) renders the note index. Unknown hashes render
+  // nothing.
+  const page = match ? (
+    <PinWindow noteId={match[1]} />
+  ) : window.location.hash === "#/panel" ? (
+    <TrayPanel />
+  ) : null;
   return (
     <ConfigProvider
       locale={zhCN}
@@ -32,7 +40,7 @@ function Root() {
         },
       }}
     >
-      <PinWindow noteId={match[1]} />
+      {page}
     </ConfigProvider>
   );
 }

@@ -28,6 +28,14 @@ export function GetTheme(): $CancellablePromise<string> {
 }
 
 /**
+ * HidePanel hides the tray panel. The panel frontend calls it after focusing
+ * a note (or creating one) so the panel collapses like a popover.
+ */
+export function HidePanel(): $CancellablePromise<void> {
+    return $Call.ByID(1470653529);
+}
+
+/**
  * OpenPinnedWindow opens a frameless, always-on-top desktop window showing
  * the given note. If the window already exists it is focused instead. Returns
  * true when a new window was created. Height is user-draggable (no content

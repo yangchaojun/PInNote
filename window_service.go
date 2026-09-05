@@ -147,6 +147,18 @@ func (s *WindowService) ClosePinnedWindow(noteID string) error {
 	return nil
 }
 
+// HidePanel hides the tray panel. The panel frontend calls it after focusing
+// a note (or creating one) so the panel collapses like a popover.
+func (s *WindowService) HidePanel() error {
+	if s.handle.app == nil {
+		return fmt.Errorf("application not ready")
+	}
+	if win, ok := s.handle.app.Window.GetByName(panelWindowName); ok {
+		win.Hide()
+	}
+	return nil
+}
+
 // RequestFrontmostDelete asks the frontmost pin window to delete its note.
 // The frontend owns the flush-then-trash sequence (an in-flight edit must be
 // persisted before trashing), so this forwards the request with the note id —

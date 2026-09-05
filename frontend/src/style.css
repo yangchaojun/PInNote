@@ -157,6 +157,72 @@ kbd {
   font-size: 12px;
 }
 
+/* ---------- Tray panel ---------- */
+
+.tray-panel {
+  height: 100vh;
+  overflow-y: auto;
+  border-radius: 10px;
+  background: var(--pin-bg);
+  box-shadow: 0 0 0 1px var(--pin-ring);
+}
+
+.tray-panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+}
+
+.tray-panel-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.tray-panel-item:hover {
+  background: var(--pin-ring);
+}
+
+.tray-panel-item-title {
+  color: var(--title);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray-panel-item-excerpt {
+  color: var(--secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tray-panel-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+}
+
+.tray-panel-empty-icon {
+  color: var(--accent);
+  font-size: 28px;
+}
+
 /* ---------- TipTap editor surface ---------- */
 
 .pin-editor {

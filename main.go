@@ -94,6 +94,13 @@ func main() {
 		log.Printf("register global shortcut: %v", err)
 	}
 
+	// Menu bar status item: tray panel on left click, context menu on right
+	// click. "Show all" reopens a window for every live note — the same
+	// idempotent path as startup restore, so it doubles as the mouse-side way
+	// back into a resident app whose windows are all collapsed.
+	showAllNotes := func() { RestoreAllNoteWindows(noteService, windowService) }
+	setupTray(app, windowService.pinBackground(), newNote, showAllNotes)
+
 	// Permanently remove notes whose 60-day trash window has expired.
 	if purged, err := noteService.PurgeExpiredTrash(); err != nil {
 		log.Printf("purge expired trash: %v", err)

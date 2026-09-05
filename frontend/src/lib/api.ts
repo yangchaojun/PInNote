@@ -45,6 +45,14 @@ export function openPinnedWindow(id: string): Promise<boolean> {
   return windows.OpenPinnedWindow(id) as Promise<boolean>;
 }
 
+export function createNote(content: string): Promise<Note> {
+  return notes.CreateNote(content) as Promise<Note>;
+}
+
+export function hidePanel(): Promise<void> {
+  return windows.HidePanel() as Promise<void>;
+}
+
 export function closePinnedWindow(id: string): Promise<void> {
   return windows.ClosePinnedWindow(id) as Promise<void>;
 }
