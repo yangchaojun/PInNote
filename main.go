@@ -62,10 +62,13 @@ func main() {
 	// Menu-bar fallbacks for the keyboard-first flows (spec §4.4). On macOS
 	// the AppMenu role must come first (it provides the standard application
 	// menu with Quit), and the fallback actions live in a submenu — menu bar
-	// entries are submenus; AppKit drops leaf items.
+	// entries are submenus; AppKit drops leaf items. EditMenu is required:
+	// ⌘V/⌘C/⌘X in the webviews are dispatched through the menu's paste:/copy:
+	// selectors, and without it every clipboard shortcut silently dies.
 	menu := application.NewMenu()
 	if runtime.GOOS == "darwin" {
 		menu.AddRole(application.AppMenu)
+		menu.AddRole(application.EditMenu)
 	}
 	actions := menu.AddSubmenu("PinNote")
 	actions.Add("新建笔记").SetAccelerator("CmdOrCtrl+Option+N").OnClick(func(*application.Context) { newNote() })
