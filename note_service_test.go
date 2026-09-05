@@ -122,3 +122,136 @@ func TestPinnedUpdateAndTrashInteraction(t *testing.T) {
 		t.Errorf("editing a trashed note should fail")
 	}
 }
+
+func TestDiscardIfEmpty(t *testing.T) {
+	s := newTestService(t)
+
+	// An empty note is hard-deleted: it never reaches the trash.
+	empty, _ := s.CreateNote("")
+	deleted, err := s.DiscardIfEmpty(empty.ID)
+	if err != nil || !deleted {
+		t.Fatalf("discard empty note: deleted=%v err=%v", deleted, err)
+	}
+	if _, err := s.GetNote(empty.ID); err == nil {
+		t.Errorf("note should be gone entirely")
+	}
+	if trash, _ := s.ListTrash(); len(trash) != 0 {
+		t.Errorf("empty note must not enter the trash")
+	}
+
+	// A whitespace-only note counts as empty too.
+	ws, _ := s.CreateNote("   \n\t\n")
+	deleted, err = s.DiscardIfEmpty(ws.ID)
+	if err != nil || !deleted {
+		t.Fatalf("discard whitespace note: deleted=%v err=%v", deleted, err)
+	}
+
+	// A note with content is kept, whatever its content is.
+	kept, _ := s.CreateNote("有内容")
+	deleted, err = s.DiscardIfEmpty(kept.ID)
+	if err != nil || deleted {
+		t.Fatalf("non-empty note must survive: deleted=%v err=%v", deleted, err)
+	}
+	if _, err := s.GetNote(kept.ID); err != nil {
+		t.Errorf("content note should survive: %v", err)
+	}
+
+	// Unknown ids are a no-op, not an error.
+	deleted, err = s.DiscardIfEmpty("nonexistent")
+	if err != nil || deleted {
+		t.Fatalf("discard nonexistent: deleted=%v err=%v", deleted, err)
+	}
+}
+
+func TestDeriveTitleEnhanced(t *testing.T) {
+	cases := []struct{ content, want string }{
+		{"# 标题\n\n正文", "标题"},
+		{"- [ ] 买牛奶\n- [x] 已做", "买牛奶"},
+		{"- [x] 已完成任务", "已完成任务"},
+		{"- [X] 大写 X", "大写 X"},
+		{"**加粗**首行", "加粗首行"},
+		{"`code` 行", "code 行"},
+		{"~~删除线~~ 与 **粗体**", "删除线 与 粗体"},
+		{"*斜体* 开头", "斜体 开头"},
+		{"> 引用行", "引用行"},
+		{"普通首行", "普通首行"},
+		{"", "无标题笔记"},
+		{"\n \n- [ ] 全空", "全空"},
+	}
+	for _, c := range cases {
+		if got := deriveTitle(c.content); got != c.want {
+			t.Errorf("deriveTitle(%q) = %q, want %q", c.content, got, c.want)
+		}
+	}
+}
+
+// fakeOpener records which notes got a restored window.
+type fakeOpener struct{ opened []string }
+
+func (f *fakeOpener) OpenPinnedWindow(id string) (bool, error) {
+	f.opened = append(f.opened, id)
+	return true, nil
+}
+
+func TestRestoreAllNoteWindows(t *testing.T) {
+	s := newTestService(t)
+	live1, _ := s.CreateNote("第一")
+	live2, _ := s.CreateNote("第二")
+	trashed, _ := s.CreateNote("被删")
+	if _, err := s.TrashNote(trashed.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	opener := &fakeOpener{}
+	RestoreAllNoteWindows(s, opener)
+
+	// Every live note gets its window back; trashed notes stay closed.
+	if len(opener.opened) != 2 {
+		t.Fatalf("opened = %v, want exactly the 2 live notes", opener.opened)
+	}
+	got := map[string]bool{}
+	for _, id := range opener.opened {
+		got[id] = true
+	}
+	if !got[live1.ID] || !got[live2.ID] {
+		t.Errorf("opened = %v, want %s and %s", opener.opened, live1.ID, live2.ID)
+	}
+	if got[trashed.ID] {
+		t.Errorf("trashed note must not be restored")
+	}
+}
+
+func TestThemePersistence(t *testing.T) {
+	db, err := openDBAt(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	// Default is dark when nothing has been persisted.
+	w := NewWindowService(&appHandle{}, db)
+	if w.GetTheme() != "dark" {
+		t.Errorf("default theme = %q, want dark", w.GetTheme())
+	}
+
+	// SetTheme persists (works without a running app) and is read back by a
+	// fresh service — the Go side is the single source of truth.
+	if err := w.SetTheme("light"); err != nil {
+		t.Fatalf("set theme: %v", err)
+	}
+	if w.Theme() != "light" {
+		t.Errorf("in-memory theme = %q, want light", w.Theme())
+	}
+	reopened := NewWindowService(&appHandle{}, db)
+	if reopened.GetTheme() != "light" {
+		t.Errorf("persisted theme = %q, want light", reopened.GetTheme())
+	}
+
+	// Invalid values are rejected and change nothing.
+	if err := w.SetTheme("sepia"); err == nil {
+		t.Errorf("invalid theme should be rejected")
+	}
+	if reopened.Theme() != "light" {
+		t.Errorf("theme should be unchanged after invalid set")
+	}
+}

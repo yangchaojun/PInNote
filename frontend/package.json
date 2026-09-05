@@ -7,24 +7,36 @@
     "dev": "vite",
     "build:dev": "tsc && vite build --minify false --mode development",
     "build": "tsc && vite build --mode production",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
     "@tanstack/react-query": "^5.102.8",
+    "@tiptap/core": "3.30.5",
+    "@tiptap/extension-list": "3.30.5",
+    "@tiptap/extension-paragraph": "3.30.5",
+    "@tiptap/extension-table": "3.30.5",
+    "@tiptap/extensions": "3.30.5",
+    "@tiptap/markdown": "3.30.5",
+    "@tiptap/pm": "3.30.5",
+    "@tiptap/react": "3.30.5",
+    "@tiptap/starter-kit": "3.30.5",
     "@wailsio/runtime": "latest",
     "antd": "^5.29.3",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "zustand": "^5.0.15"
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.3.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.0.0",
+    "jsdom": "^26.0.0",
     "typescript": "^5.2.2",
-    "vite": "^8.0.5"
+    "vite": "^8.0.5",
+    "vitest": "^3.0.0"
   }
 }

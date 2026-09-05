@@ -43,11 +43,16 @@ func NewNoteService(db *sql.DB) *NoteService {
 // service can broadcast change events to every window.
 func (s *NoteService) SetApp(a *appHandle) { s.app = a }
 
-// deriveTitle returns the first non-empty line of the content, truncated to a
-// reasonable length, so the list always has something readable to show.
+// deriveTitle returns the first non-empty line of the content, stripped of
+// markdown decoration, truncated to a reasonable length, so the pin window's
+// header tooltip always has something readable to show.
 func deriveTitle(content string) string {
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
+		// Paired marks must go before the block-prefix trim: TrimLeft would
+		// otherwise eat one side of a pair ("*斜体*" → "斜体*") and strand it.
+		line = stripPairedInlineMarks(line)
+		line = stripCheckboxPrefix(line)
 		line = strings.TrimLeft(line, "#>-*+[0-9] ")
 		if line == "" {
 			continue
@@ -59,6 +64,40 @@ func deriveTitle(content string) string {
 		return line
 	}
 	return "无标题笔记"
+}
+
+// stripCheckboxPrefix removes a GFM task marker ("`- [ ] `", "`- [x] `") from
+// the start of a line.
+func stripCheckboxPrefix(line string) string {
+	for _, prefix := range []string{"- [ ] ", "- [x] ", "- [X] "} {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimPrefix(line, prefix)
+		}
+	}
+	return line
+}
+
+// stripPairedInlineMarks removes the first pair of each inline markdown
+// delimiter (`~~`, `**`, “ ` “, `*`, `_`) from a line, so e.g. a first line
+// of "**加粗**首行" titles as "加粗首行". Delimiters are tried longest-first
+// so `**` is not consumed as two `*` pairs.
+func stripPairedInlineMarks(line string) string {
+	for changed := true; changed; {
+		changed = false
+		for _, mark := range []string{"~~", "**", "`", "*", "_"} {
+			i := strings.Index(line, mark)
+			if i < 0 {
+				continue
+			}
+			j := strings.Index(line[i+len(mark):], mark)
+			if j < 0 {
+				continue
+			}
+			line = line[:i] + line[i+len(mark):i+len(mark)+j] + line[i+2*len(mark)+j:]
+			changed = true
+		}
+	}
+	return line
 }
 
 func newID() string {
@@ -173,6 +212,33 @@ func (s *NoteService) UpdateNote(id string, content string) (Note, error) {
 	return s.GetNote(id)
 }
 
+// DiscardIfEmpty hard-deletes a note whose current content is blank. This is
+// the pin-only form factor's empty-note rule: closing a window (or the exit
+// path) flushes the editor first, then calls this — a never-typed note is
+// gone immediately instead of living on in the trash. Returns true when the
+// note was deleted.
+func (s *NoteService) DiscardIfEmpty(id string) (bool, error) {
+	n, err := s.GetNote(id)
+	if errors.Is(err, ErrNoteNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load note for discard: %w", err)
+	}
+	if strings.TrimSpace(n.Content) != "" {
+		return false, nil
+	}
+	res, err := s.db.Exec(`DELETE FROM notes WHERE id = ?`, id)
+	if err != nil {
+		return false, fmt.Errorf("discard empty note: %w", err)
+	}
+	if affected, err := res.RowsAffected(); err == nil && affected == 0 {
+		return false, nil
+	}
+	s.notifyChanged()
+	return true, nil
+}
+
 // TrashNote moves a note to the trash (recoverable for 60 days) and un-pins
 // it.
 func (s *NoteService) TrashNote(id string) (Note, error) {
@@ -193,6 +259,9 @@ func (s *NoteService) TrashNote(id string) (Note, error) {
 }
 
 // RestoreNote moves a note out of the trash back into the live list.
+//
+// FROZEN (pin-only form factor): the trash has no UI in this form factor;
+// kept for data compatibility. New code must not call it.
 func (s *NoteService) RestoreNote(id string) (Note, error) {
 	res, err := s.db.Exec(
 		`UPDATE notes SET deleted_at = NULL, updated_at = ?
@@ -211,6 +280,8 @@ func (s *NoteService) RestoreNote(id string) (Note, error) {
 
 // DeleteNoteForever removes a note from the database permanently. Only notes
 // already in the trash can be deleted forever.
+//
+// FROZEN (pin-only form factor): same as RestoreNote — no trash UI exists.
 func (s *NoteService) DeleteNoteForever(id string) error {
 	res, err := s.db.Exec(`DELETE FROM notes WHERE id = ? AND deleted_at IS NOT NULL`, id)
 	if err != nil {
@@ -224,6 +295,8 @@ func (s *NoteService) DeleteNoteForever(id string) error {
 }
 
 // EmptyTrash permanently deletes every note in the trash.
+//
+// FROZEN (pin-only form factor): same as RestoreNote — no trash UI exists.
 func (s *NoteService) EmptyTrash() error {
 	if _, err := s.db.Exec(`DELETE FROM notes WHERE deleted_at IS NOT NULL`); err != nil {
 		return fmt.Errorf("empty trash: %w", err)
@@ -232,8 +305,11 @@ func (s *NoteService) EmptyTrash() error {
 	return nil
 }
 
-// SetPinned pins or unpins a note. Pinning opens a frameless always-on-top
-// window on the desktop; unpinning closes it.
+// SetPinned pins or unpins a note.
+//
+// FROZEN (pin-only form factor, ADR-0001): the pinned/unpinned distinction is
+// retired — every live note always has a window. Kept only so old clients and
+// existing data keep working; new code must not call it.
 func (s *NoteService) SetPinned(id string, pinned bool) (Note, error) {
 	p := 0
 	if pinned {
@@ -269,8 +345,10 @@ func (s *NoteService) PurgeExpiredTrash() (int64, error) {
 	return count, nil
 }
 
-// TrashRetentionDays exposes the retention window to the frontend so it can
-// render "N 天后自动清除" style labels.
+// TrashRetentionDays exposes the retention window to the frontend.
+//
+// FROZEN (pin-only form factor): the purge countdown UI is gone; the constant
+// itself still drives the startup purge.
 func (s *NoteService) GetTrashRetentionDays() int64 { return TrashRetentionDays }
 
 // notifyChanged broadcasts a lightweight event so every window (main + pinned)

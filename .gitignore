@@ -11,3 +11,5 @@ build/android/overlay.json
 build/android/gen/
 prototype/**/node_modules
 prototype/**/dist
+node_modules/
+/pinnote

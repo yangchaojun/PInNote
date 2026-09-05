@@ -1,30 +1,27 @@
 # PinNote
 
-键盘优先的桌面便签笔记应用。基于 **Wails v3 + React 19 + TypeScript + Vite + Ant Design + TanStack Query + Zustand + Go + SQLite** 构建。
+打开即写、自动保存、启动恢复的桌面便签。**每条笔记就是一个常驻桌面的 pin 窗口**——无边框、置顶、跨 Space，没有主面板，基于 **Wails v3 + React 19 + TypeScript + TipTap v3 + Go + SQLite** 构建。
 
-## 功能
+## 产品形态
 
-- **Markdown 支持**：标题、列表、有序/无序列表、待办复选框（`- [ ]`）、粗体/斜体/删除线、行内代码、链接、引用、表格等 GFM 语法；主窗口支持"编辑 + 实时预览"分屏，预览中的复选框可以直接勾选并回写源文本。
-- **键盘优先**：常用操作全部有快捷键，无需鼠标：
+- **打开即写**：`⌘⌥N` 在任何应用下呼出一个新 pin 窗口，光标就位；整窗是 TipTap WYSIWYG 编辑器，`# `、`- `、`- [ ] `、`**粗体**` 等语法原地即时渲染，无编辑/预览切换。
+- **自动保存**：编辑 400ms 后自动落库；窗口失焦立即保存；关窗/删除前强制 flush。`note.content` 是 Markdown 事实源，每次保存经过 `parse(serialize(doc)) ≡ doc` 守卫，不能无损往返的内容（HTML 注释、行内图片等）以 rawSource 块原样保留，零静默丢失。
+- **启动恢复**：关窗只是收起（Stickies 式）；退出重启后全部 live 笔记的窗口按原样恢复，主题保持一致。
+- **空笔记硬删**：从未输入过内容的窗口关闭即删除记录，不进回收站。
+- **回收站**：`⌘⌫` 删除的笔记保留 **60 天**（无 UI），启动时自动清除过期笔记。
 
-  | 快捷键 | 功能 |
-  | --- | --- |
-  | `⌘⌥N`（全局） | 在任何应用中呼出 PinNote 并新建笔记 |
-  | `⌘N` / `⌘F` | 新建笔记 / 搜索笔记 |
-  | `⌥↓` / `⌥↑` | 切换下一条 / 上一条笔记 |
-  | `⌘E` | 切换 Markdown 预览 |
-  | `⌘P` | 固定 / 取消固定当前笔记到桌面 |
-  | `⌘⌫` | 移入回收站 |
-  | `⌘⇧T` | 切换笔记 / 回收站视图 |
-  | `⌘⇧D` | 切换暗色 / 亮色主题 |
-  | `⌘B` / `⌘I` / `⌘K` | 粗体 / 斜体 / 链接 |
-  | `⌘⇧7` / `⌘⇧8` / `⌘⇧X` | 有序列表 / 无序列表 / 待办事项 |
-  | `⌘⇧9` / `⌘⇧/` | 引用块 / 快捷键帮助 |
+## 快捷键
 
-- **自动调整窗口**：笔记固定到桌面后成为独立的无边框置顶窗口，窗口高度随内容自动调整（`ResizeObserver` + `Window.SetSize`），也可在固定窗口中直接编辑。
-- **回收站恢复**：删除的笔记保留 **60 天**，可随时恢复或彻底删除；启动时自动清除超过 60 天的笔记（`PurgeExpiredTrash`，有单元测试覆盖）。
-- **Pin 到桌面**：固定的笔记以置顶、无边框、跨 Space 的桌面窗口显示，重启应用后自动恢复所有固定窗口。
-- **暗 / 亮主题**：工具栏按钮或 `⌘⇧D` 一键切换；主题持久化到 `localStorage`（重启保留，固定窗口通过 `storage` 事件实时跟随），并经 `WindowService.SetTheme` 同步原生窗口背景色。
+| 键 | 动作 | 作用域 |
+|---|---|---|
+| `⌘⌥N` | 新建笔记并打开 pin 窗口 | 全局 |
+| `⌘B` / `⌘I` / `⌘K` | 粗体 / 斜体 / 链接 | pin 窗口内 |
+| `⌘⇧D` | 切换亮/暗主题（所有窗口同帧生效） | 全局生效 |
+| `⌘⌫` | 删除当前笔记（进回收站）并关窗 | pin 窗口内 |
+| `⌘⇧/` | 快捷键帮助模态框 | pin 窗口内 |
+| `Esc` | 关闭帮助模态框 | pin 窗口内 |
+
+菜单栏（PinNote）提供 新建笔记 / 删除当前笔记 / 切换主题 兜底项。
 
 ## 开发
 
@@ -44,14 +41,21 @@ wails3 build
 # 重新生成前端绑定（修改 Go service 后）
 wails3 generate bindings
 
-# 运行后端单元测试
+# 运行测试（Go 单元测试 + 前端 vitest，含 109 项 Markdown 往返语料网）
 go test .
+cd frontend && npm test
 ```
 
 ## 架构
 
-- `main.go` — 应用入口：主窗口、全局快捷键（⌘⌥N）、启动时清理过期回收站、恢复固定窗口。
-- `db.go` — SQLite（`modernc.org/sqlite`，纯 Go 无 CGO），数据存于 `~/Library/Application Support/PinNote/pinnote.db`。
-- `note_service.go` — 笔记 CRUD、回收站（60 天保留）、pin 状态；变更后广播 `notes:changed` 事件同步所有窗口。
-- `window_service.go` — 固定窗口管理：无边框、置顶（`MacWindowLevelFloating`）、隐藏任务栏。
-- `frontend/src` — React 前端：`App.tsx`（主窗口）、`PinWindow.tsx`（固定窗口，路由 `/#/pin/<id>`）、`theme.ts`（主题 store：持久化、`data-theme` CSS 变量切换、跨窗口同步）、Zustand（UI 状态）、TanStack Query（数据缓存与失效）。
+- `main.go` — 应用入口：菜单栏、全局快捷键（⌘⌥N → CreateNote + OpenPinnedWindow）、启动 purge 过期回收站、恢复全部 live 窗口。
+- `db.go` — SQLite（`modernc.org/sqlite`，纯 Go 无 CGO），`notes` 与 `settings`（key-value）两张表，数据存于 `~/Library/Application Support/PinNote/pinnote.db`。
+- `note_service.go` — 笔记 CRUD、`deriveTitle`（保存路径内从首行派生标题）、`DiscardIfEmpty`（空笔记硬删）、回收站 purge；变更后广播 `notes:changed`。`SetPinned`/`RestoreNote`/`DeleteNoteForever`/`EmptyTrash` 为冻结 API（pin-only 形态退役，仅为数据兼容保留）。
+- `window_service.go` — pin 窗口管理：无边框（保留 `Titled|Resizable` mask，原生边缘可拖拽调尺寸，最小高 150）、置顶、跨 Space；主题单一事实源（`GetTheme`/`SetTheme` 读写 settings 表并广播 `theme:changed`）。
+- `frontend/src` — `PinWindow.tsx`（唯一界面，路由 `/#/pin/<id>`）、`PinEditor.tsx`（TipTap 整窗编辑器：审计装载、保存守卫、三层 flush）、`lib/audit.ts`（逐块审计 + rawSource 降级 + 保存守卫）、`hooks/usePinShortcuts.ts`、`theme.ts`（镜像 Go 主题）、TanStack Query（数据缓存与 `notes:changed` 失效）。
+
+## 决策记录
+
+- [ADR-0001 移除主面板](docs/adr/0001-remove-main-panel.md)
+- [ADR-0002 Markdown 事实源 + WYSIWYG](docs/adr/0002-markdown-source-of-truth-wysiwyg.md)
+- TipTap × Markdown 往返能力调研见 `research/tiptap-markdown-roundtrip` 分支 `docs/research/tiptap-markdown-roundtrip.md`。

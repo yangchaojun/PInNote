@@ -70,10 +70,40 @@ CREATE TABLE IF NOT EXISTS notes (
 CREATE INDEX IF NOT EXISTS idx_notes_deleted_at ON notes(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at);
 CREATE INDEX IF NOT EXISTS idx_notes_pinned_updated ON notes(pinned DESC, updated_at DESC);
+CREATE TABLE IF NOT EXISTS settings (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
 `
 	_, err := db.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("migrate database: %w", err)
+	}
+	return nil
+}
+
+// getSetting reads a single key from the settings table. Returns ok=false
+// when the key does not exist.
+func getSetting(db *sql.DB, key string) (string, bool, error) {
+	var value string
+	err := db.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("read setting %q: %w", key, err)
+	}
+	return value, true, nil
+}
+
+// setSetting upserts a single key in the settings table.
+func setSetting(db *sql.DB, key, value string) error {
+	if _, err := db.Exec(
+		`INSERT INTO settings (key, value) VALUES (?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, value,
+	); err != nil {
+		return fmt.Errorf("write setting %q: %w", key, err)
 	}
 	return nil
 }

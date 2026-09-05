@@ -1,8 +1,10 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -24,17 +26,26 @@ func (h *appHandle) emit(name string, data any) {
 	}
 }
 
-// WindowService creates and manages the note windows: the main list window
-// and one frameless always-on-top window per pinned note.
+// WindowService manages the pin windows: one frameless always-on-top window
+// per live note. It is also the single source of truth for the theme, which
+// is persisted in the settings table and broadcast to every window.
 type WindowService struct {
 	handle *appHandle
+	db     *sql.DB
 
 	mu    sync.Mutex
 	theme string // "light" or "dark"; drives native window background colours.
 }
 
-func NewWindowService(h *appHandle) *WindowService {
-	return &WindowService{handle: h, theme: "dark"}
+func NewWindowService(h *appHandle, db *sql.DB) *WindowService {
+	theme, _, err := getSetting(db, "theme")
+	if err != nil {
+		log.Printf("read theme setting: %v", err)
+	}
+	if theme != "light" {
+		theme = "dark"
+	}
+	return &WindowService{handle: h, db: db, theme: theme}
 }
 
 func (s *WindowService) Theme() string {
@@ -43,15 +54,8 @@ func (s *WindowService) Theme() string {
 	return s.theme
 }
 
-// mainBackground / pinBackground return the native window backdrop colours for
-// the current theme. They mirror the frontend's --bg-top and --pin-bg values.
-func (s *WindowService) mainBackground() application.RGBA {
-	if s.Theme() == "light" {
-		return application.NewRGBA(0xf7, 0xf8, 0xfa, 0xff)
-	}
-	return application.NewRGB(0x16, 0x17, 0x1a)
-}
-
+// pinBackground returns the native window backdrop colour for the current
+// theme. It mirrors the frontend's --pin-bg value.
 func (s *WindowService) pinBackground() application.RGBA {
 	if s.Theme() == "light" {
 		return application.NewRGBA(0xfa, 0xfa, 0xfb, 0xf2)
@@ -59,25 +63,28 @@ func (s *WindowService) pinBackground() application.RGBA {
 	return application.NewRGBA(0x1e, 0x1f, 0x22, 0xf2)
 }
 
-// SetTheme records the frontend theme and repaints the native backdrop of
-// every open window so the uncovered/under-construction window surface matches.
-// Called by the frontend at startup and whenever the theme toggles.
+// GetTheme exposes the persisted theme so each window can apply it at
+// startup (the Go side is the single source of truth).
+func (s *WindowService) GetTheme() string { return s.Theme() }
+
+// SetTheme persists the theme, repaints the native backdrop of every open
+// window, and broadcasts theme:changed so all windows (and the antd
+// ConfigProvider) switch in the same frame.
 func (s *WindowService) SetTheme(mode string) error {
-	if s.handle.app == nil {
-		return fmt.Errorf("application not ready")
-	}
 	if mode != "light" && mode != "dark" {
 		return fmt.Errorf("unknown theme %q", mode)
+	}
+	if err := setSetting(s.db, "theme", mode); err != nil {
+		return fmt.Errorf("persist theme: %w", err)
 	}
 	s.mu.Lock()
 	s.theme = mode
 	s.mu.Unlock()
-	for _, win := range s.handle.app.Window.GetAll() {
-		if win.Name() == "main" {
-			win.SetBackgroundColour(s.mainBackground())
-		} else {
+	if s.handle.app != nil {
+		for _, win := range s.handle.app.Window.GetAll() {
 			win.SetBackgroundColour(s.pinBackground())
 		}
+		s.handle.emit("theme:changed", mode)
 	}
 	return nil
 }
@@ -87,7 +94,8 @@ func PinnedWindowName(noteID string) string { return "pin-" + noteID }
 
 // OpenPinnedWindow opens a frameless, always-on-top desktop window showing
 // the given note. If the window already exists it is focused instead. Returns
-// true when a new window was created.
+// true when a new window was created. Height is user-draggable (no content
+// auto-fit), minimum 150px.
 func (s *WindowService) OpenPinnedWindow(noteID string) (bool, error) {
 	if s.handle.app == nil {
 		return false, fmt.Errorf("application not ready")
@@ -100,22 +108,23 @@ func (s *WindowService) OpenPinnedWindow(noteID string) (bool, error) {
 	}
 
 	// Anchor the window near the top-right of the screen so it feels like a
-	// desktop widget; the frontend fine-tunes the size to fit the content.
+	// desktop widget; the window size only changes by user dragging.
 	win := s.handle.app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:            name,
-		Title:           "PinNote",
-		Width:           380,
-		Height:          300,
-		Frameless:       true,
-		AlwaysOnTop:     true,
-		URL:             "/#/pin/" + noteID,
+		Name:             name,
+		Title:            "PinNote",
+		Width:            380,
+		Height:           300,
+		MinHeight:        150,
+		Frameless:        true,
+		AlwaysOnTop:      true,
+		URL:              "/#/pin/" + noteID,
 		BackgroundColour: s.pinBackground(),
 		Windows: application.WindowsWindow{
 			HiddenOnTaskbar: true,
 		},
 		Mac: application.MacWindow{
-			Backdrop:            application.MacBackdropTranslucent,
-			WindowLevel:         application.MacWindowLevelFloating,
+			Backdrop:    application.MacBackdropTranslucent,
+			WindowLevel: application.MacWindowLevelFloating,
 			CollectionBehavior: application.MacWindowCollectionBehaviorCanJoinAllSpaces |
 				application.MacWindowCollectionBehaviorFullScreenAuxiliary,
 		},
@@ -138,31 +147,43 @@ func (s *WindowService) ClosePinnedWindow(noteID string) error {
 	return nil
 }
 
-// FocusMainWindow brings the main note list window to the front.
-func (s *WindowService) FocusMainWindow() error {
+// RequestFrontmostDelete asks the frontmost pin window to delete its note.
+// The frontend owns the flush-then-trash sequence (an in-flight edit must be
+// persisted before trashing), so this forwards the request with the note id —
+// window EmitEvent is an app-wide broadcast, so every window filters on the
+// id. It is the menu-bar fallback for ⌘⌫.
+func (s *WindowService) RequestFrontmostDelete() error {
 	if s.handle.app == nil {
 		return fmt.Errorf("application not ready")
 	}
-	if win, ok := s.handle.app.Window.GetByName("main"); ok {
-		win.Show()
-		win.Focus()
+	for _, win := range s.handle.app.Window.GetAll() {
+		if !strings.HasPrefix(win.Name(), "pin-") || !win.IsFocused() {
+			continue
+		}
+		win.EmitEvent("pin:delete-requested", strings.TrimPrefix(win.Name(), "pin-"))
+		return nil
 	}
 	return nil
 }
 
-// restorePinnedWindows reopens a window for every pinned note that is not in
-// the trash. Called once at startup so pins survive an app restart.
-func restorePinnedWindows(h *appHandle, notes *NoteService, windows *WindowService) {
+// noteWindowOpener abstracts window creation so the restore logic can be
+// tested without a running application.
+type noteWindowOpener interface {
+	OpenPinnedWindow(noteID string) (bool, error)
+}
+
+// RestoreAllNoteWindows reopens a window for every live note. Called once at
+// startup so the whole desktop comes back after an app restart — closing a
+// window is only "collapse"; the note (and its window) returns on relaunch.
+func RestoreAllNoteWindows(notes *NoteService, windows noteWindowOpener) {
 	list, err := notes.ListNotes()
 	if err != nil {
 		log.Printf("list notes at startup: %v", err)
 		return
 	}
 	for _, n := range list {
-		if n.Pinned && n.DeletedAt == nil {
-			if _, err := windows.OpenPinnedWindow(n.ID); err != nil {
-				log.Printf("restore pinned window for %s: %v", n.ID, err)
-			}
+		if _, err := windows.OpenPinnedWindow(n.ID); err != nil {
+			log.Printf("restore note window for %s: %v", n.ID, err)
 		}
 	}
 }

@@ -1,53 +1,65 @@
-import { create } from "zustand";
-import { persist } from "zustand/middleware";
-import { setTheme as setNativeTheme } from "./lib/api";
+import { Events } from "@wailsio/runtime";
+import { useSyncExternalStore } from "react";
+import { getTheme, setTheme as setThemeOnGo } from "./lib/api";
 
 export type ThemeMode = "light" | "dark";
 
-interface ThemeState {
-  theme: ThemeMode;
-  setTheme: (t: ThemeMode) => void;
-  toggleTheme: () => void;
-}
+/**
+ * The Go side is the single source of truth for the theme (settings table,
+ * WindowService.GetTheme/SetTheme). This module only mirrors it onto the DOM
+ * and re-renders antd's ConfigProvider. SetTheme on Go persists, repaints the
+ * native window backdrops, and broadcasts theme:changed — every window
+ * (including the caller) switches from that single broadcast, so all pin
+ * windows and their native backdrops change in the same frame.
+ */
 
-/** Reflects the theme on <html data-theme="..."> for the CSS variable switch. */
-export function applyTheme(t: ThemeMode) {
+let current: ThemeMode = "dark";
+const listeners = new Set<() => void>();
+
+function applyTheme(t: ThemeMode) {
+  current = t;
   document.documentElement.dataset.theme = t;
   document.documentElement.style.colorScheme = t === "dark" ? "dark" : "light";
-  // Mirror the theme onto the native window backdrops; no-op outside Wails.
-  setNativeTheme(t).catch(() => undefined);
+  listeners.forEach((l) => l());
 }
 
-export const useThemeStore = create<ThemeState>()(
-  persist(
-    (set, get) => ({
-      theme: "dark",
-      setTheme: (theme) => {
-        applyTheme(theme);
-        set({ theme });
-      },
-      toggleTheme: () => get().setTheme(get().theme === "dark" ? "light" : "dark"),
-    }),
-    {
-      name: "pinnote:theme",
-      // Only the setting is persisted; applying happens via subscription below.
-      partialize: (s) => ({ theme: s.theme }),
+export function useTheme(): ThemeMode {
+  return useSyncExternalStore(
+    (cb) => {
+      listeners.add(cb);
+      return () => listeners.delete(cb);
     },
-  ),
-);
+    () => current,
+  );
+}
 
-applyTheme(useThemeStore.getState().theme);
-
-// Pinned windows are separate webviews over the same localStorage: follow
-// changes made in other windows. (setTheme writes the same value back, so
-// this listener won't bounce between windows.)
-window.addEventListener("storage", (e) => {
-  if (e.key !== "pinnote:theme" || e.newValue == null) return;
+/** Reads the persisted theme once at startup. Falls back to dark outside Wails. */
+export async function initTheme(): Promise<void> {
   try {
-    const theme = (JSON.parse(e.newValue)?.state?.theme ?? null) as ThemeMode | null;
-    const cur = useThemeStore.getState();
-    if (theme && theme !== cur.theme) cur.setTheme(theme);
+    const t = await getTheme();
+    if (t === "light" || t === "dark") applyTheme(t);
   } catch {
-    // Ignore malformed storage events.
+    applyTheme("dark");
   }
+}
+
+export async function toggleTheme(): Promise<void> {
+  const next: ThemeMode = current === "dark" ? "light" : "dark";
+  try {
+    await setThemeOnGo(next);
+    // The theme:changed broadcast applies it; this is just a fast path.
+    applyTheme(next);
+  } catch {
+    // Plain browser dev (no Wails runtime): still switch the DOM.
+    applyTheme(next);
+  }
+}
+
+// Follow theme changes made in other windows (or the menu bar).
+Events.On("theme:changed", (ev) => {
+  // Go Emit with a single argument delivers the value itself; be tolerant of
+  // a wrapped array just in case.
+  const d = ev.data as unknown;
+  const mode = Array.isArray(d) ? d[0] : d;
+  if (mode === "light" || mode === "dark") applyTheme(mode);
 });

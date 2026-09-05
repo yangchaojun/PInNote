@@ -1,4 +1,5 @@
-/* PinNote — minimal, keyboard-first, light/dark themes via CSS variables. */
+/* PinNote — pin-only form factor. One frameless window per note; light/dark
+ * themes via CSS variables, mirrored natively by WindowService. */
 
 :root {
   /* Dark theme (default) */
@@ -7,12 +8,8 @@
   --title: #cfd0d4;
   --secondary: #9a9ba1;
   --dim: #7c7d84;
-  --bg-top: #17181b;
-  --bg-bottom: #1a1b1f;
   --border: #26272c;
   --border-soft: #232428;
-  --hover: #232429;
-  --active: #2c3143;
   --accent: #8fa4f7;
   --rule: #2c2d33;
   --code-bg: #26272c;
@@ -26,6 +23,10 @@
   --pin-bg: rgba(30, 31, 34, 0.97);
   --pin-ring: rgba(255, 255, 255, 0.06);
   --scroll-thumb: #33343a;
+  --rawsource-border: #7a5c2e;
+  --rawsource-bg: rgba(122, 92, 46, 0.12);
+  --rawsource-text: #d8c08a;
+  --rawsource-btn: #7a5c2e;
 }
 
 html[data-theme="light"] {
@@ -34,12 +35,8 @@ html[data-theme="light"] {
   --title: #30343c;
   --secondary: #6b7078;
   --dim: #8a8f98;
-  --bg-top: #f7f8fa;
-  --bg-bottom: #f2f3f6;
   --border: #e3e5e9;
   --border-soft: #e9eaee;
-  --hover: #eceef1;
-  --active: #e1e7fa;
   --accent: #4c66c9;
   --rule: #e0e2e7;
   --code-bg: #eef0f3;
@@ -53,6 +50,10 @@ html[data-theme="light"] {
   --pin-bg: rgba(250, 250, 251, 0.97);
   --pin-ring: rgba(0, 0, 0, 0.08);
   --scroll-thumb: #c9ccd2;
+  --rawsource-border: #b39460;
+  --rawsource-bg: rgba(179, 148, 96, 0.12);
+  --rawsource-text: #8a6d3b;
+  --rawsource-btn: #a08350;
 }
 
 * {
@@ -84,309 +85,7 @@ kbd {
   color: var(--kbd-color);
 }
 
-/* ---------- Main window layout ---------- */
-
-.app {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
-}
-
-.titlebar-drag {
-  height: 32px;
-  flex: none;
-  /* Draggable region behind the macOS traffic lights. */
-  --wails-draggable: drag;
-}
-
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 12px 8px;
-  flex: none;
-}
-
-.search-input {
-  flex: 1;
-  max-width: 380px;
-}
-
-.content {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-
-.sidebar {
-  width: 250px;
-  flex: none;
-  overflow-y: auto;
-  border-right: 1px solid var(--border);
-  padding: 4px 6px 12px;
-}
-
-.main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* ---------- Note list ---------- */
-
-.note-list-group-label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 10px 10px 4px;
-  font-size: 11px;
-  letter-spacing: 0.05em;
-}
-
-.pin-icon {
-  color: var(--accent);
-  font-size: 11px;
-}
-
-.note-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 7px 10px;
-  border-radius: 7px;
-  cursor: default;
-  user-select: none;
-}
-
-.note-item:hover {
-  background: var(--hover);
-}
-
-.note-item.active {
-  background: var(--active);
-}
-
-.note-item-title {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 13px;
-}
-
-.note-item-meta {
-  flex: none;
-  font-size: 11px;
-  color: var(--dim);
-}
-
-.note-list-empty {
-  padding-top: 60px;
-}
-
-/* ---------- Editor ---------- */
-
-.editor {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.editor-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px 8px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.editor-toolbar-spacer {
-  flex: 1;
-}
-
-.editor-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-}
-
-.editor-body.split .editor-textarea {
-  border-right: 1px solid var(--border-soft);
-}
-
-.editor-textarea,
-.editor-textarea textarea {
-  height: 100% !important;
-  resize: none;
-  font-size: 14px;
-  line-height: 1.7;
-  padding: 16px 20px;
-  background: transparent;
-}
-
-.editor-preview {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
-  padding: 16px 20px;
-}
-
-/* ---------- Markdown rendering ---------- */
-
-.markdown-body {
-  font-size: 14px;
-  line-height: 1.75;
-  word-break: break-word;
-}
-
-.markdown-body h1,
-.markdown-body h2,
-.markdown-body h3,
-.markdown-body h4 {
-  margin: 0.7em 0 0.4em;
-  line-height: 1.3;
-}
-
-.markdown-body h1:first-child,
-.markdown-body h2:first-child,
-.markdown-body p:first-child {
-  margin-top: 0;
-}
-
-.markdown-body h1 {
-  font-size: 1.5em;
-  border-bottom: 1px solid var(--rule);
-  padding-bottom: 0.25em;
-}
-
-.markdown-body h2 {
-  font-size: 1.25em;
-}
-
-.markdown-body code {
-  padding: 2px 5px;
-  border-radius: 5px;
-  background: var(--code-bg);
-  font-family: "SF Mono", Menlo, Consolas, monospace;
-  font-size: 0.9em;
-}
-
-.markdown-body pre {
-  padding: 12px 14px;
-  border-radius: 8px;
-  background: var(--pre-bg);
-  overflow-x: auto;
-}
-
-.markdown-body pre code {
-  padding: 0;
-  background: none;
-}
-
-.markdown-body blockquote {
-  margin: 0.6em 0;
-  padding: 0.1em 0 0.1em 1em;
-  border-left: 3px solid var(--quote-border);
-  color: var(--quote-color);
-}
-
-.markdown-body table {
-  border-collapse: collapse;
-  margin: 0.6em 0;
-}
-
-.markdown-body th,
-.markdown-body td {
-  border: 1px solid var(--table-border);
-  padding: 5px 12px;
-}
-
-.markdown-body input[type="checkbox"] {
-  accent-color: #6f8ffa;
-  margin-right: 6px;
-  cursor: pointer;
-}
-
-.markdown-body li.task-list-item,
-.markdown-body li:has(> input[type="checkbox"]) {
-  list-style: none;
-  margin-left: -1.2em;
-}
-
-.markdown-body a {
-  color: var(--accent);
-}
-
-.markdown-body hr {
-  border: none;
-  border-top: 1px solid var(--rule);
-}
-
-/* ---------- Editor empty state ---------- */
-
-.editor-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  text-align: center;
-}
-
-.editor-empty-title {
-  font-size: 22px;
-  font-weight: 600;
-  color: var(--title);
-  margin: 0;
-}
-
-.editor-empty-hint {
-  color: var(--dim);
-  font-size: 13px;
-  margin: 0;
-  line-height: 2;
-}
-
-/* ---------- Trash ---------- */
-
-.trash-view {
-  flex: 1;
-  overflow-y: auto;
-  padding: 14px 18px;
-}
-
-.trash-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.trash-item-main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 2px;
-}
-
-.trash-item-title {
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.trash-item-meta {
-  font-size: 11px;
-}
-
-/* ---------- Pinned (desktop) window ---------- */
+/* ---------- Pin window ---------- */
 
 .pin-window {
   display: flex;
@@ -409,8 +108,7 @@ kbd {
   --wails-draggable: drag;
 }
 
-.pin-header button,
-.pin-header .pin-header-actions {
+.pin-header button {
   --wails-draggable: nodrag;
 }
 
@@ -419,46 +117,186 @@ kbd {
   font-size: 12px;
 }
 
-.pin-header-title {
+/* Empty flex spacer that carries the drag affordance and the native tooltip
+ * with the derived first-line title (spec §3.3, §4.1). */
+.pin-header-drag {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
-  color: var(--secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  height: 1em;
   user-select: none;
-}
-
-.pin-header-actions {
-  display: flex;
-  gap: 2px;
 }
 
 .pin-body {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  /* Body longer than the window scrolls inside; the width is never squeezed
+   * (the overlay scrollbar covers the text edge). */
+  overflow-y: auto;
+  overflow-y: overlay;
   padding: 4px 16px 14px;
   cursor: default;
 }
 
-.pin-edit {
-  width: 100%;
-  height: 100%;
-  resize: none;
-  border: none;
-  outline: none;
+/* Thin rounded overlay-style scrollbar: invisible at rest, shown while the
+ * pointer hovers anywhere in the window. */
+.pin-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.pin-body::-webkit-scrollbar-thumb {
   background: transparent;
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1.7;
-  font-family: inherit;
+  border-radius: 4px;
+}
+
+.pin-window:hover .pin-body::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
 }
 
 .pin-hint {
   color: var(--dim);
   font-size: 12px;
+}
+
+/* ---------- TipTap editor surface ---------- */
+
+.pin-editor {
+  height: 100%;
+}
+
+.tiptap {
+  outline: none;
+  min-height: 100%;
+  font-size: 13px;
+  line-height: 1.7;
+  word-break: break-word;
+  caret-color: var(--accent);
+}
+
+.tiptap p:first-child {
+  margin-top: 0.2em;
+}
+
+.tiptap h1,
+.tiptap h2,
+.tiptap h3,
+.tiptap h4 {
+  line-height: 1.3;
+  margin: 0.7em 0 0.4em;
+}
+
+.tiptap h1 {
+  font-size: 1.45em;
+}
+
+.tiptap h2 {
+  font-size: 1.25em;
+}
+
+.tiptap code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: var(--code-bg);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.tiptap pre {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--pre-bg);
+  overflow-x: auto;
+}
+
+.tiptap pre code {
+  padding: 0;
+  background: none;
+}
+
+.tiptap blockquote {
+  margin: 0.6em 0;
+  padding: 0.1em 0 0.1em 1em;
+  border-left: 3px solid var(--quote-border);
+  color: var(--quote-color);
+}
+
+.tiptap table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+}
+
+.tiptap th,
+.tiptap td {
+  border: 1px solid var(--table-border);
+  padding: 4px 10px;
+}
+
+.tiptap ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 4px;
+}
+
+.tiptap ul[data-type="taskList"] li {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.tiptap ul[data-type="taskList"] li > label {
+  flex: none;
+  user-select: none;
+}
+
+.tiptap a {
+  color: var(--accent);
+}
+
+.tiptap hr {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: 0.8em 0;
+}
+
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--dim);
+}
+
+/* rawSource demotion block: verbatim source the editor cannot model, kept
+ * byte-for-byte through saves (spec §6). */
+.raw-source-block {
+  border: 1px dashed var(--rawsource-border);
+  background: var(--rawsource-bg);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 8px 0;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.raw-source-block pre {
+  flex: 1;
+  margin: 0;
+  white-space: pre-wrap;
+  font: 12px/1.5 ui-monospace, monospace;
+  color: var(--rawsource-text);
+  background: none;
+  padding: 0;
+}
+
+.raw-source-block button {
+  background: var(--rawsource-btn);
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: none;
 }
 
 /* ---------- Shortcuts modal ---------- */
@@ -479,26 +317,11 @@ kbd {
 
 .shortcut-keys {
   flex: none;
-  width: 120px;
+  width: 130px;
   text-align: center;
 }
 
 .shortcut-desc {
   font-size: 13px;
   color: var(--text-soft);
-}
-
-/* Scrollbars */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--scroll-thumb);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
 }

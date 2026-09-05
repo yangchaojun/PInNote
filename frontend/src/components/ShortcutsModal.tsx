@@ -1,34 +1,18 @@
 import { Modal } from "antd";
-import { useUIStore } from "../store";
 
+// The full shortcut set, kept identical to spec §4.2.
 const SHORTCUTS: Array<[string, string]> = [
-  ["⌘ Option N", "全局呼出 PinNote 并新建笔记（任何应用下可用）"],
-  ["⌘ N", "新建笔记"],
-  ["⌘ F", "搜索笔记"],
-  ["⌥ ↓ / ⌥ ↑", "切换到下一条 / 上一条笔记"],
-  ["⌘ E", "切换 Markdown 预览"],
-  ["⌘ P", "固定 / 取消固定当前笔记到桌面"],
-  ["⌘ ⌫", "将当前笔记移入回收站"],
-  ["⌘ ⇧ T", "切换 笔记 / 回收站 视图"],
-  ["⌘ ⇧ D", "切换 暗色 / 亮色 主题"],
-  ["⌘ B / ⌘ I / ⌘ K", "粗体 / 斜体 / 插入链接"],
-  ["⌘ ⇧ 7 / ⌘ ⇧ 8", "有序列表 / 无序列表"],
-  ["⌘ ⇧ X", "待办事项（复选框）"],
-  ["⌘ ⇧ 9", "引用块"],
-  ["⌘ ⇧ /", "显示本帮助"],
-  ["Esc", "清除搜索 / 关闭弹窗"],
+  ["⌘⌥N", "新建笔记并打开 pin 窗口（全局，任何应用下可用）"],
+  ["⌘B / ⌘I / ⌘K", "粗体 / 斜体 / 链接"],
+  ["⌘⇧D", "切换亮/暗主题（所有窗口同时生效）"],
+  ["⌘⌫", "删除当前笔记（进回收站）并关窗"],
+  ["⌘⇧/", "显示本帮助"],
+  ["Esc", "关闭本帮助"],
 ];
 
-export function ShortcutsModal() {
-  const open = useUIStore((s) => s.shortcutsOpen);
+export function ShortcutsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <Modal
-      title="键盘快捷键"
-      open={open}
-      footer={null}
-      onCancel={() => useUIStore.getState().setShortcutsOpen(false)}
-      width={480}
-    >
+    <Modal title="键盘快捷键" open={open} footer={null} onCancel={onClose} width={480}>
       <div className="shortcuts-list">
         {SHORTCUTS.map(([keys, desc]) => (
           <div className="shortcut-row" key={keys}>
