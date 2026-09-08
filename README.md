@@ -9,6 +9,7 @@
 - **启动恢复**：关窗只是收起（Stickies 式）；退出重启后全部 live 笔记的窗口按原样恢复，主题保持一致。
 - **空笔记硬删**：从未输入过内容的窗口关闭即删除记录，不进回收站。
 - **回收站**：`⌘⌫` 删除的笔记保留 **60 天**（无 UI），启动时自动清除过期笔记。
+- **驻留与托盘**：所有窗口关闭后应用仍在后台运行；菜单栏图钉图标是驻留态的可见锚点——左键开托盘面板（live 笔记索引，点一条即聚焦其窗口并收起，失焦自动收起），右键开托盘菜单（新建笔记 / 显示全部笔记 / 退出）。
 
 ## 快捷键
 
@@ -21,7 +22,7 @@
 | `⌘⇧/` | 快捷键帮助模态框 | pin 窗口内 |
 | `Esc` | 关闭帮助模态框 | pin 窗口内 |
 
-菜单栏（PinNote）提供 新建笔记 / 删除当前笔记 / 切换主题 兜底项。
+应用菜单栏（PinNote）提供 新建笔记 / 删除当前笔记 / 切换主题 兜底项；托盘右键菜单提供 新建笔记 / 显示全部笔记 / 退出，左键打开托盘面板。
 
 ## 开发
 
@@ -41,21 +42,22 @@ wails3 build
 # 重新生成前端绑定（修改 Go service 后）
 wails3 generate bindings
 
-# 运行测试（Go 单元测试 + 前端 vitest，含 109 项 Markdown 往返语料网）
+# 运行测试（Go 单元测试 + 前端 vitest 132 项，其中 Markdown 往返语料网 51 条语料）
 go test .
 cd frontend && npm test
 ```
 
 ## 架构
 
-- `main.go` — 应用入口：菜单栏、全局快捷键（⌘⌥N → CreateNote + OpenPinnedWindow）、启动 purge 过期回收站、恢复全部 live 窗口。
+- `main.go` — 应用入口：应用菜单（含 `EditMenu` role，否则 webview 里的 ⌘V/⌘C/⌘X 收不到 AppKit 分发）、全局快捷键（⌘⌥N → CreateNote + OpenPinnedWindow）、启动 purge 过期回收站、恢复全部 live 窗口。
+- `tray.go` — 菜单栏状态项：macOS 用单色 template 图标、其他平台用彩色图标；左键开/关托盘面板窗口（路由 `/#/panel`），右键开托盘菜单；`WindowLostFocus` 即收起，并用 300ms 宽限窗口避开「先失焦后点击」导致的重开竞态。
 - `db.go` — SQLite（`modernc.org/sqlite`，纯 Go 无 CGO），`notes` 与 `settings`（key-value）两张表，数据存于 `~/Library/Application Support/PinNote/pinnote.db`。
 - `note_service.go` — 笔记 CRUD、`deriveTitle`（保存路径内从首行派生标题）、`DiscardIfEmpty`（空笔记硬删）、回收站 purge；变更后广播 `notes:changed`。`SetPinned`/`RestoreNote`/`DeleteNoteForever`/`EmptyTrash` 为冻结 API（pin-only 形态退役，仅为数据兼容保留）。
-- `window_service.go` — pin 窗口管理：无边框（保留 `Titled|Resizable` mask，原生边缘可拖拽调尺寸，最小高 150）、置顶、跨 Space；主题单一事实源（`GetTheme`/`SetTheme` 读写 settings 表并广播 `theme:changed`）。
-- `frontend/src` — `PinWindow.tsx`（唯一界面，路由 `/#/pin/<id>`）、`PinEditor.tsx`（TipTap 整窗编辑器：审计装载、保存守卫、三层 flush）、`lib/audit.ts`（逐块审计 + rawSource 降级 + 保存守卫）、`hooks/usePinShortcuts.ts`、`theme.ts`（镜像 Go 主题）、TanStack Query（数据缓存与 `notes:changed` 失效）。
+- `window_service.go` — pin 窗口管理：无边框（保留 `Titled|Resizable` mask，原生边缘可拖拽调尺寸，最小高 150）、置顶、跨 Space；`HidePanel`（托盘面板收起）、`RequestFrontmostDelete`（菜单兜底 ⌘⌫）；主题单一事实源（`GetTheme`/`SetTheme` 读写 settings 表并广播 `theme:changed`）。
+- `frontend/src` — `PinWindow.tsx`（主界面，路由 `/#/pin/<id>`）、`TrayPanel.tsx`（托盘面板，路由 `/#/panel`）、`PinEditor.tsx`（TipTap 整窗编辑器：审计装载、保存守卫、三层 flush）、`lib/audit.ts`（逐块审计 + rawSource 降级 + 保存守卫）、`hooks/usePinShortcuts.ts`、`theme.ts`（镜像 Go 主题）、TanStack Query（数据缓存与 `notes:changed` 失效）。
 
 ## 决策记录
 
 - [ADR-0001 移除主面板](docs/adr/0001-remove-main-panel.md)
 - [ADR-0002 Markdown 事实源 + WYSIWYG](docs/adr/0002-markdown-source-of-truth-wysiwyg.md)
-- TipTap × Markdown 往返能力调研见 `research/tiptap-markdown-roundtrip` 分支 `docs/research/tiptap-markdown-roundtrip.md`。
+- [TipTap × Markdown 往返能力调研](docs/research/tiptap-markdown-roundtrip.md)（spec §2 的完整论据；文中引用的 `MarkdownView.tsx`/`lib/markdown.ts` 已随主面板移除，属历史记录）。
