@@ -1,0 +1,189 @@
+name: Release
+
+# 打 tag 即发版：git tag v0.2.0 && git push origin v0.2.0
+# workflow_dispatch 只构建并上传产物，不发 release，用来验证流水线。
+#
+# 只有 macOS：pin-only 形态依赖 NSStatusItem 与原生 frame resize，Windows/Linux 出界。
+# 产物：bin/PinNote.app -> .zip（ditto）+ .dmg（wails3 样式化，失败则回退 hdiutil）
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "写入构建的版本号（不带 v）。留空则用 Info.plist 的 CFBundleShortVersionString"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_NAME: PinNote
+  # 必须与 go.mod 里的 github.com/wailsapp/wails/v3 版本一致，否则 CI 与本地打包器行为漂移。
+  WAILS_CLI_VERSION: v3.0.0-beta.16
+
+jobs:
+  release:
+    name: Build and publish macOS arm64
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # setup-go 不保证 GOPATH/bin 在 PATH 上，wails3 装在那里。
+      - name: Put Go bin on PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          plist_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" build/darwin/Info.plist)
+          number="$INPUT_VERSION"
+          publish=false
+          case "$GITHUB_REF" in
+            refs/tags/*)
+              tag="${GITHUB_REF#refs/tags/}"
+              case "$tag" in
+                v[0-9]*.[0-9]*) number="${tag#v}" ;;
+                *) echo "::error::tag '${tag}' 不符合 vX.Y.Z"; exit 1 ;;
+              esac
+              publish=true
+              ;;
+          esac
+          number="${number:-$plist_version}"
+          case "$number" in
+            [0-9]*.[0-9]*) ;;
+            *) echo "::error::version '${number}' 不符合 x.y.z"; exit 1 ;;
+          esac
+          if [ "$number" != "$plist_version" ]; then
+            echo "::notice::版本 ${number} 与 build/darwin/Info.plist 的 ${plist_version} 不一致，产物按 ${number} 写入"
+          fi
+          {
+            echo "tag=v${number}"
+            echo "number=${number}"
+            echo "publish=${publish}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@"$WAILS_CLI_VERSION"
+
+      # 顺序有讲究：main.go 的 //go:embed all:frontend/dist 要求 dist 先存在，
+      # 否则 go vet / go test 在干净检出下直接编译失败。
+      - name: Test and build frontend
+        run: |
+          set -euo pipefail
+          cd frontend
+          npm ci
+          npm test
+          npm run build
+
+      - name: Test Go
+        run: |
+          set -euo pipefail
+          go vet .
+          go test -count=1 .
+
+      - name: Stamp version into the bundle
+        env:
+          NUMBER: ${{ steps.version.outputs.number }}
+        run: |
+          set -euo pipefail
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $NUMBER" build/darwin/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NUMBER" build/darwin/Info.plist
+
+      - name: Package
+        run: wails3 package
+
+      - name: Verify code signature
+        run: codesign --verify --deep --strict --verbose=2 "bin/${APP_NAME}.app"
+
+      # 样式化 dmg 要挂盘并驱动 Finder 摆图标，无 GUI 会话时可能失败——回退成普通 dmg，
+      # 保证发版不被装饰拖住。
+      - name: Build dmg
+        run: |
+          set -euo pipefail
+          if wails3 task darwin:create:dmg; then
+            exit 0
+          fi
+          # hdiutil -ov 直接覆盖样式化尝试留下的半成品，无需先删。
+          echo "::warning::样式化 dmg 失败，回退 hdiutil"
+          staging=$(mktemp -d)
+          cp -R "bin/${APP_NAME}.app" "$staging/"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create -volname "$APP_NAME" -srcfolder "$staging" -ov -format UDZO "bin/${APP_NAME}.dmg"
+          rm -rf "$staging"
+
+      - name: Check generated files are in sync
+        run: |
+          set -euo pipefail
+          # 构建会 go mod tidy + wails3 generate bindings；若结果与仓库不同，说明提交里缺了生成物。
+          if [ -n "$(git status --porcelain -- go.mod go.sum frontend/bindings)" ]; then
+            git status --porcelain -- go.mod go.sum frontend/bindings
+            echo "::warning::构建过程改写了 go.mod/go.sum 或 frontend/bindings，请在本地同步后重新提交"
+          fi
+
+      - name: Collect artifacts
+        env:
+          NUMBER: ${{ steps.version.outputs.number }}
+        run: |
+          set -euo pipefail
+          arch=$(uname -m)
+          base="${APP_NAME}-${NUMBER}-macOS-${arch}"
+          mkdir -p dist
+          mv "bin/${APP_NAME}.dmg" "dist/${base}.dmg"
+          # --keepParent 必须有：缺它 zip 根目录会变成 Contents/，解压出来不是可安装的 bundle。
+          ditto -c -k --keepParent --sequesterRsrc "bin/${APP_NAME}.app" "dist/${base}.zip"
+          (cd dist && shasum -a 256 "${base}.zip" "${base}.dmg" > SHA256SUMS.txt)
+          {
+            echo "- 版本：v${NUMBER}"
+            echo "- 架构：${arch}（未做 universal，amd64 需另加构建矩阵）"
+            echo "- 签名：ad-hoc，未经 Developer ID 签名与 notarize"
+            echo "- 文件：\`$(cd dist && ls | tr '\n' ' ')\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload workflow artifacts
+        if: steps.version.outputs.publish != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.version.outputs.tag }}-macOS-build
+          path: dist/
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: steps.version.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "${{ env.APP_NAME }} ${{ steps.version.outputs.tag }}"
+          prerelease: auto
+          files: |
+            dist/*.zip
+            dist/*.dmg
+            dist/SHA256SUMS.txt
+          body: |
+            ## 安装
+            1. 下载 `.dmg`（拖进 Applications）或 `.zip`：`ditto -x -k <zip 文件名> /Applications`。
+            2. 构建使用 ad-hoc 签名，未经 Apple notarize，首次打开会被 Gatekeeper 拦下：**右键 → 打开** 确认一次即可；若仍被拒：
+               `xattr -dr com.apple.quarantine /Applications/PinNote.app`
+            3. 完整性校验：`shasum -a 256 -c SHA256SUMS.txt`。
+
+            需要 Developer ID 签名 + notarize，要先配证书与 notary API 凭据，见 README 的「发版」章节。

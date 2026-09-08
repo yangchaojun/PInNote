@@ -48,9 +48,30 @@ wails3 package
 wails3 generate bindings
 
 # 运行测试（Go 单元测试 + 前端 vitest 132 项，其中 Markdown 往返语料网 51 条语料）
+# 注意：先跑过 `npm run build` 产出 frontend/dist，否则 `go test`/`go vet` 会因为
+# main.go 的 //go:embed all:frontend/dist 找不到文件而编译失败
+cd frontend && npm test && cd ..
 go test .
-cd frontend && npm test
 ```
+
+## 发版
+
+打 tag 即发版：`.github/workflows/release.yml` 在 `macos-latest` 上串起完整流水线——前端
+`vitest` + `tsc` + `vite build` → `go vet` + `go test` → 写入版本号 → `wails3 package` →
+样式化 `.dmg`（无 GUI 会话时回退 `hdiutil`）→ ad-hoc 签名校验 → GitHub Release。
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+产物：`PinNote-<版本>-macOS-<arch>.zip`（`ditto --keepParent`，保留 bundle 结构与签名）、
+同名 `.dmg`、`SHA256SUMS.txt`。
+
+- 手动 `workflow_dispatch` 只构建并上传 workflow 产物，**不发 release**，用来验证流水线。
+- tag 与 `build/darwin/Info.plist` 版本不一致时以 tag 为准，CI 在打包前改写 plist（仓库里那份不动）。
+- 只出 arm64，且没有 Developer ID 签名与 notarize：用户首次打开要 **右键 → 打开**。要正式签名需配证书与
+  notary 凭据，见 `wails3 signing` 与 `build/darwin/Taskfile.yml` 的 `sign` 任务。
 
 ## 架构
 
