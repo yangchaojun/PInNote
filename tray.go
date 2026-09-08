@@ -53,11 +53,7 @@ func setupTray(app *application.App, pinBackground application.RGBA, newNote, sh
 		},
 	})
 	if panel == nil {
-		log.Printf("create tray panel window")
-	}
-
-	if panel == nil {
-		log.Printf("create tray panel window")
+		log.Printf("create tray panel window: tray entry points unavailable")
 		return
 	}
 
