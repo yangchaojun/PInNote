@@ -9,7 +9,7 @@
 - **启动恢复**：关窗只是收起（Stickies 式）；退出重启后全部 live 笔记的窗口按原样恢复，主题保持一致。
 - **空笔记硬删**：从未输入过内容的窗口关闭即删除记录，不进回收站。
 - **回收站**：`⌘⌫` 删除的笔记保留 **60 天**（无 UI），启动时自动清除过期笔记。
-- **驻留与托盘**：所有窗口关闭后应用仍在后台运行；菜单栏图钉图标是驻留态的可见锚点——左键开托盘面板（live 笔记索引，点一条即聚焦其窗口并收起，失焦自动收起），右键开托盘菜单（新建笔记 / 显示全部笔记 / 退出）。
+- **驻留与托盘**：所有窗口关闭后应用仍在后台运行；菜单栏图钉图标是驻留态的可见锚点——左键直接唤起**最新笔记**（一条笔记都没有时就地新建一条），右键开托盘菜单（新建笔记 / 显示笔记列表 / 退出）；「显示笔记列表」打开轻量索引面板，列出全部 live 笔记，点一条即聚焦其窗口并收起，失焦自动收起。
 
 ## 快捷键
 
@@ -21,8 +21,9 @@
 | `⌘⌫` | 删除当前笔记（进回收站）并关窗 | pin 窗口内 |
 | `⌘⇧/` | 快捷键帮助模态框 | pin 窗口内 |
 | `Esc` | 关闭帮助模态框 | pin 窗口内 |
+| 单击图钉图标 | 唤起最新笔记（无笔记则新建） | 菜单栏 |
 
-应用菜单栏（PinNote）提供 新建笔记 / 删除当前笔记 / 切换主题 兜底项；托盘右键菜单提供 新建笔记 / 显示全部笔记 / 退出，左键打开托盘面板。
+应用菜单栏（PinNote）提供 新建笔记 / 删除当前笔记 / 切换主题 兜底项；托盘右键菜单提供 新建笔记 / 显示笔记列表 / 退出。
 
 ## 开发
 
@@ -39,6 +40,10 @@ wails3 dev
 # 生产构建（产物在 bin/）
 wails3 build
 
+# 打包 .app（bin/PinNote.app）——注意 `wails3 build` 只更新裸二进制 bin/PinNote，
+# 不会刷新 .app；从 .app 启动前必须先 package，否则跑的是旧版本
+wails3 package
+
 # 重新生成前端绑定（修改 Go service 后）
 wails3 generate bindings
 
@@ -50,9 +55,9 @@ cd frontend && npm test
 ## 架构
 
 - `main.go` — 应用入口：应用菜单（含 `EditMenu` role，否则 webview 里的 ⌘V/⌘C/⌘X 收不到 AppKit 分发）、全局快捷键（⌘⌥N → CreateNote + OpenPinnedWindow）、启动 purge 过期回收站、恢复全部 live 窗口。
-- `tray.go` — 菜单栏状态项：macOS 用单色 template 图标、其他平台用彩色图标；左键开/关托盘面板窗口（路由 `/#/panel`），右键开托盘菜单；`WindowLostFocus` 即收起，并用 300ms 宽限窗口避开「先失焦后点击」导致的重开竞态。
+- `tray.go` — 菜单栏状态项：macOS 用单色 template 图标、其他平台用彩色图标；左键走 `summonLatest`（唤起最新笔记），托盘菜单的「显示笔记列表」开/定位面板窗口（路由 `/#/panel`）并在 `WindowLostFocus` 时收起。
 - `db.go` — SQLite（`modernc.org/sqlite`，纯 Go 无 CGO），`notes` 与 `settings`（key-value）两张表，数据存于 `~/Library/Application Support/PinNote/pinnote.db`。
-- `note_service.go` — 笔记 CRUD、`deriveTitle`（保存路径内从首行派生标题）、`DiscardIfEmpty`（空笔记硬删）、回收站 purge；变更后广播 `notes:changed`。`SetPinned`/`RestoreNote`/`DeleteNoteForever`/`EmptyTrash` 为冻结 API（pin-only 形态退役，仅为数据兼容保留）。
+- `note_service.go` — 笔记 CRUD、`deriveTitle`（保存路径内从首行派生标题）、`DiscardIfEmpty`（空笔记硬删）、`latestLiveNote`（菜单栏左键的唤起目标，未导出以免扩大绑定 API）、回收站 purge；变更后广播 `notes:changed`。`SetPinned`/`RestoreNote`/`DeleteNoteForever`/`EmptyTrash` 为冻结 API（pin-only 形态退役，仅为数据兼容保留）。
 - `window_service.go` — pin 窗口管理：无边框（保留 `Titled|Resizable` mask，原生边缘可拖拽调尺寸，最小高 150）、置顶、跨 Space；`HidePanel`（托盘面板收起）、`RequestFrontmostDelete`（菜单兜底 ⌘⌫）；主题单一事实源（`GetTheme`/`SetTheme` 读写 settings 表并广播 `theme:changed`）。
 - `frontend/src` — `PinWindow.tsx`（主界面，路由 `/#/pin/<id>`）、`TrayPanel.tsx`（托盘面板，路由 `/#/panel`）、`PinEditor.tsx`（TipTap 整窗编辑器：审计装载、保存守卫、三层 flush）、`lib/audit.ts`（逐块审计 + rawSource 降级 + 保存守卫）、`hooks/usePinShortcuts.ts`、`theme.ts`（镜像 Go 主题）、TanStack Query（数据缓存与 `notes:changed` 失效）。
 

@@ -7,8 +7,9 @@ import * as api from "./lib/api";
 import type { Note } from "./lib/api";
 
 /**
- * The tray panel — a small index of live notes toggled by left-clicking the
- * menu bar icon. It is not a main panel (ADR-0001 retired that): rows only
+ * The tray panel — a small index of live notes opened from the tray menu's
+ * 显示笔记列表 item (the icon's left click summons the latest note instead).
+ * It is not a main panel (ADR-0001 retired that): rows only
  * focus the note's pin window, the empty state offers a single create button,
  * and the Go side hides the window as soon as a row is chosen or focus is
  * lost. Sorted most-recently-updated first so the note you just touched is on
