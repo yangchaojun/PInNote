@@ -39,6 +39,44 @@ func TestEmptyContentTitle(t *testing.T) {
 	}
 }
 
+// The menu bar icon's left click summons whatever this returns.
+func TestLatestLiveNote(t *testing.T) {
+	s := newTestService(t)
+
+	if n, err := s.latestLiveNote(); err != nil || n != nil {
+		t.Fatalf("latestLiveNote on empty db = %v, %v; want nil, nil", n, err)
+	}
+
+	older, _ := s.CreateNote("较早的笔记")
+	newest, _ := s.CreateNote("最新的笔记")
+	// updated_at has second resolution; backdate to make the order explicit.
+	if _, err := s.db.Exec(
+		`UPDATE notes SET updated_at = updated_at - 60 WHERE id = ?`, older.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	latest, err := s.latestLiveNote()
+	if err != nil {
+		t.Fatalf("latestLiveNote: %v", err)
+	}
+	if latest == nil || latest.ID != newest.ID {
+		t.Fatalf("latestLiveNote = %v, want note %s", latest, newest.ID)
+	}
+
+	// Trashing the newest note falls back to the next most recent live one.
+	if _, err := s.TrashNote(newest.ID); err != nil {
+		t.Fatal(err)
+	}
+	latest, err = s.latestLiveNote()
+	if err != nil {
+		t.Fatalf("latestLiveNote after trash: %v", err)
+	}
+	if latest == nil || latest.ID != older.ID {
+		t.Fatalf("latestLiveNote = %v, want note %s", latest, older.ID)
+	}
+}
+
 func TestTrashRestoreFlow(t *testing.T) {
 	s := newTestService(t)
 	n, _ := s.CreateNote("待办：买牛奶")

@@ -97,12 +97,25 @@ func main() {
 		log.Printf("register global shortcut: %v", err)
 	}
 
-	// Menu bar status item: tray panel on left click, context menu on right
-	// click. "Show all" reopens a window for every live note — the same
-	// idempotent path as startup restore, so it doubles as the mouse-side way
-	// back into a resident app whose windows are all collapsed.
-	showAllNotes := func() { RestoreAllNoteWindows(noteService, windowService) }
-	setupTray(app, windowService.pinBackground(), newNote, showAllNotes)
+	// Left click on the menu bar icon is the mouse-side way back into a
+	// resident app: focus the most recently updated note, creating the first
+	// note when the desktop has none. The context menu's 显示笔记列表 covers the
+	// "show me the whole index" case instead.
+	summonLatest := func() {
+		latest, err := noteService.latestLiveNote()
+		if err != nil {
+			log.Printf("summon latest note: %v", err)
+			return
+		}
+		if latest == nil {
+			newNote()
+			return
+		}
+		if _, err := windowService.OpenPinnedWindow(latest.ID); err != nil {
+			log.Printf("summon latest note: %v", err)
+		}
+	}
+	setupTray(app, windowService.pinBackground(), newNote, summonLatest)
 
 	// Permanently remove notes whose 60-day trash window has expired.
 	if purged, err := noteService.PurgeExpiredTrash(); err != nil {
