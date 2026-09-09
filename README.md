@@ -47,7 +47,7 @@ wails3 package
 # 重新生成前端绑定（修改 Go service 后）
 wails3 generate bindings
 
-# 运行测试（Go 单元测试 + 前端 vitest 132 项，其中 Markdown 往返语料网 51 条语料）
+# 运行测试（Go 单元测试 + 前端 vitest 137 项，其中 Markdown 往返语料网 51 条语料）
 # 注意：先跑过 `npm run build` 产出 frontend/dist，否则 `go test`/`go vet` 会因为
 # main.go 的 //go:embed all:frontend/dist 找不到文件而编译失败
 cd frontend && npm test && cd ..
@@ -57,33 +57,55 @@ go test .
 ## 发版
 
 打 tag 即发版：`.github/workflows/release.yml` 在 `macos-latest` 上串起完整流水线——前端
-`vitest` + `tsc` + `vite build` → `go vet` + `go test` → 写入版本号 → `wails3 package` →
-样式化 `.dmg`（无 GUI 会话时回退 `hdiutil`）→ ad-hoc 签名校验 → GitHub Release。
+`vitest` + `tsc` + `vite build` → `go vet` + `go test` → 写入版本号 → universal 打包 →
+校验 bundle 入口 → 样式化 `.dmg`（无 GUI 会话时回退 `hdiutil`）→ ad-hoc 签名校验 →
+生成 `.zip.sig` → GitHub Release。
 
 ```bash
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
-产物：`PinNote-<版本>-macOS-<arch>.zip`（`ditto --keepParent`，保留 bundle 结构与签名）、
-同名 `.dmg`、`SHA256SUMS.txt`。
+产物：`PinNote-<版本>-macOS-universal.zip`（`ditto --keepParent`，顶层只有 `PinNote.app` 一个条目，
+这是自更新解包的硬要求）、同名 `.dmg`、`<zip>.sig`、`SHA256SUMS.txt`。
 
 - 手动 `workflow_dispatch` 只构建并上传 workflow 产物，**不发 release**，用来验证流水线。
-- tag 与 `build/darwin/Info.plist` 版本不一致时以 tag 为准，CI 在打包前改写 plist（仓库里那份不动）。
-- 只出 arm64，且没有 Developer ID 签名与 notarize：用户首次打开要 **右键 → 打开**。要正式签名需配证书与
-  notary 凭据，见 `wails3 signing` 与 `build/darwin/Taskfile.yml` 的 `sign` 任务。
+- tag 与 `build/darwin/Info.plist` 版本不一致时以 tag 为准，CI 在打包前改写 plist（仓库里那份不动），
+  同一个版本号也注入 `main.Version`。
+
+### 一次性配置更新签名
+
+自更新只信编译期钉死的 ed25519 公钥，所以第一次发版之前先配一次密钥：
+
+```bash
+go run ./tools/sign-release keygen
+# 私钥 -> GitHub 仓库 Secret PINNOTE_UPDATE_KEY（Settings -> Secrets and variables -> Actions）
+# 公钥 -> 粘贴进 update_public_key.go 的 updatePublicKeyHex 并提交
+```
+
+Secret 缺失或公钥为空时发版流水线**直接失败**：production 构建拒绝任何验不了的产物，
+宁可没有自动更新，也不留一条看着安全、实际谁都能替换的通道（ADR-0003 D6）。
+
+- 只 macOS，且没有 Developer ID 签名与 notarize：从浏览器首次下载 `.dmg` 安装要 **右键 → 打开**。
+  之后的升级走应用内自更新，不经过 Gatekeeper。要正式签名需配证书与 notary 凭据，见
+  `wails3 signing` 与 `build/darwin/Taskfile.yml` 的 `sign` 任务。
+- 开发构建（`Version == "dev"`）、仓库工作区里的 `bin/*.app`、以及从 `.dmg` 挂载盘直接运行的副本
+  都不允许换自己的 bundle，托盘菜单在这些情况下退化为「打开下载页（.dmg）」（ADR-0003 D8）。
 
 ## 架构
 
 - `main.go` — 应用入口：应用菜单（含 `EditMenu` role，否则 webview 里的 ⌘V/⌘C/⌘X 收不到 AppKit 分发）、全局快捷键（⌘⌥N → CreateNote + OpenPinnedWindow）、启动 purge 过期回收站、恢复全部 live 窗口。
-- `tray.go` — 菜单栏状态项：macOS 用单色 template 图标、其他平台用彩色图标；左键走 `summonLatest`（唤起最新笔记），托盘菜单的「显示笔记列表」开/定位面板窗口（路由 `/#/panel`）并在 `WindowLostFocus` 时收起。
+- `tray.go` — 菜单栏状态项：macOS 用单色 template 图标、其他平台用彩色图标；左键走 `summonLatest`（唤起最新笔记），托盘菜单的「显示笔记列表」开/定位面板窗口（路由 `/#/panel`）并在 `WindowLostFocus` 时收起；另有「检查更新…」与命中新版本时出现的「更新到 vX.Y.Z…」（彩色图标即角标）。
 - `db.go` — SQLite（`modernc.org/sqlite`，纯 Go 无 CGO），`notes` 与 `settings`（key-value）两张表，数据存于 `~/Library/Application Support/PinNote/pinnote.db`。
 - `note_service.go` — 笔记 CRUD、`deriveTitle`（保存路径内从首行派生标题）、`DiscardIfEmpty`（空笔记硬删）、`latestLiveNote`（菜单栏左键的唤起目标，未导出以免扩大绑定 API）、回收站 purge；变更后广播 `notes:changed`。`SetPinned`/`RestoreNote`/`DeleteNoteForever`/`EmptyTrash` 为冻结 API（pin-only 形态退役，仅为数据兼容保留）。
-- `window_service.go` — pin 窗口管理：无边框（保留 `Titled|Resizable` mask，原生边缘可拖拽调尺寸，最小高 150）、置顶、跨 Space；`HidePanel`（托盘面板收起）、`RequestFrontmostDelete`（菜单兜底 ⌘⌫）；主题单一事实源（`GetTheme`/`SetTheme` 读写 settings 表并广播 `theme:changed`）。
+- `window_service.go` — pin 窗口管理：无边框（保留 `Titled|Resizable` mask，原生边缘可拖拽调尺寸，最小高 150）、置顶、跨 Space；`HidePanel`（托盘面板收起）、`RequestFrontmostDelete`（菜单兜底 ⌘⌫）、`RequestFlushAll`（更新屏障：广播 `pin:flush-requested` 并等所有窗口 `pin:flushed` 回执）；主题单一事实源（`GetTheme`/`SetTheme` 读写 settings 表并广播 `theme:changed`）。
+- `version.go` / `update_service.go` / `update_provider.go` / `update_guard.go` / `update_public_key.go` / `update_verify_{prod,dev}.go` / `update_card.go` — 自动更新（GitHub Releases + `app.Updater`，设计见 ADR-0003）：构建期注入版本号、后台只 `Check()` 不开窗、手动「检查更新…」复用框架内置卡片、补 `<zip>.sig` 验签、换包前的 flush 屏障与自更新守卫。
+- `tools/sign-release` — 发版用的 `keygen` / `sign` / `verify`，只用标准库（`crypto/ed25519` + `crypto/sha256`）。
 - `frontend/src` — `PinWindow.tsx`（主界面，路由 `/#/pin/<id>`）、`TrayPanel.tsx`（托盘面板，路由 `/#/panel`）、`PinEditor.tsx`（TipTap 整窗编辑器：审计装载、保存守卫、三层 flush）、`lib/audit.ts`（逐块审计 + rawSource 降级 + 保存守卫）、`hooks/usePinShortcuts.ts`、`theme.ts`（镜像 Go 主题）、TanStack Query（数据缓存与 `notes:changed` 失效）。
 
 ## 决策记录
 
 - [ADR-0001 移除主面板](docs/adr/0001-remove-main-panel.md)
 - [ADR-0002 Markdown 事实源 + WYSIWYG](docs/adr/0002-markdown-source-of-truth-wysiwyg.md)
+- [ADR-0003 自动更新与检查更新](docs/adr/0003-auto-update.md)
 - [TipTap × Markdown 往返能力调研](docs/research/tiptap-markdown-roundtrip.md)（spec §2 的完整论据；文中引用的 `MarkdownView.tsx`/`lib/markdown.ts` 已随主面板移除，属历史记录）。
