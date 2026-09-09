@@ -26,6 +26,7 @@ func main() {
 	handle := &appHandle{}
 	noteService := NewNoteService(db)
 	windowService := NewWindowService(handle, db)
+	updateService := NewUpdateService(handle, db, windowService)
 
 	app := application.New(application.Options{
 		Name:        "PinNote",
@@ -45,6 +46,16 @@ func main() {
 	})
 	handle.app = app
 	noteService.SetApp(handle)
+
+	// The flush barrier answers pin:flushed on the app bus, and the updater
+	// needs the app instance to attach to, so both wire up here rather than in
+	// their constructors (ADR-0003 D7).
+	windowService.startFlushListener()
+	if err := updateService.Configure(app); err != nil {
+		log.Printf("configure updater: %v", err)
+	}
+	updateService.Start()
+	defer updateService.Stop()
 
 	// Every live note gets a desktop pin window on startup; the main panel is
 	// gone (ADR-0001) and ⌘⌥N is the only way to create a note.
@@ -115,7 +126,7 @@ func main() {
 			log.Printf("summon latest note: %v", err)
 		}
 	}
-	setupTray(app, windowService.pinBackground(), newNote, summonLatest)
+	setupTray(app, windowService.pinBackground(), newNote, summonLatest, updateService)
 
 	// Permanently remove notes whose 60-day trash window has expired.
 	if purged, err := noteService.PurgeExpiredTrash(); err != nil {
