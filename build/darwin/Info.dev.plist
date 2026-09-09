@@ -6,7 +6,7 @@
         <key>CFBundleName</key>
             <string>PinNote</string>
         <key>CFBundleExecutable</key>
-            <string>pin-note</string>
+            <string>PinNote</string>
         <key>CFBundleIdentifier</key>
             <string>com.pinnote.app</string>
         <key>CFBundleVersion</key>
