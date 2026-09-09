@@ -76,6 +76,41 @@ export function PinWindow({ noteId }: { noteId: string }) {
     [deleteNote, noteId],
   );
 
+  // Update barrier (ADR-0003 D7): the card's restart quits the app through the
+  // updater itself, which Go cannot veto, so the updater asks every window to
+  // reach the database first and cancels the round if any answer is dirty. The
+  // ack is sent even for an empty flush - silence is what "unsaved edits
+  // remain" looks like from the other side.
+  useEffect(
+    () =>
+      Events.On("pin:flush-requested", (ev) => {
+        const data = (ev as { data?: Record<string, unknown> }).data;
+        const token = typeof data?.token === "string" ? data.token : "";
+        void (async () => {
+          let dirty = true;
+          try {
+            const editor = editorRef.current;
+            if (editor) {
+              await editor.flush();
+              dirty = editor.isDirty();
+              if (!dirty && liveRef.current) {
+                await api.discardIfEmpty(noteId);
+              }
+            } else {
+              // Nothing is mounted, so nothing is held in a buffer: a window
+              // showing the deleted-note placeholder must not veto updates.
+              dirty = false;
+            }
+          } catch (err) {
+            console.error("pin window flush for update", err);
+            dirty = true;
+          }
+          await Events.Emit("pin:flushed", { token, noteID: noteId, dirty }).catch(() => undefined);
+        })();
+      }),
+    [noteId],
+  );
+
   // 退出收尾 (§5.2): on app quit, apply the empty-note rule after the
   // editor's flush has run (child effects registered their beforeunload
   // first). Only fires for live notes — a just-trashed note must keep its

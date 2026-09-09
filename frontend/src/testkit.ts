@@ -5,3 +5,9 @@
  * flush-ordering assertions.
  */
 export const events: string[] = [];
+
+/**
+ * Renderer->Go events recorded by the mocked Wails runtime, so an ack can be
+ * asserted without reaching into the module mock from the test file.
+ */
+export const emitted: Array<{ name: string; data: unknown }> = [];

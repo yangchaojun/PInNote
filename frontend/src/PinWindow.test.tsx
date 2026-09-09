@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PinWindow } from "./PinWindow";
 import { events } from "./testkit";
 import * as api from "./lib/api";
+import { emitted } from "./testkit";
 import { Events, Window } from "@wailsio/runtime";
 
 const mockFlush = vi.fn(async () => {
@@ -62,10 +63,17 @@ vi.mock("./lib/api", async () => {
   };
 });
 
-vi.mock("@wailsio/runtime", () => {
+vi.mock("@wailsio/runtime", async () => {
+  // Hoisted factory: the recorder has to come from a module, not this file.
+  const { emitted } = await import("./testkit");
   const handlers: Record<string, Array<(ev: unknown) => void>> = {};
   return {
     Events: {
+      Emit: vi.fn((name: string, data: unknown) => {
+        emitted.push({ name, data });
+        return Promise.resolve(false);
+      }),
+      __emitted: emitted,
       On: vi.fn((name: string, cb: (ev: unknown) => void) => {
         (handlers[name] ??= []).push(cb);
         // Real unsubscribe: React effect cleanups (component unmounts) must
@@ -104,6 +112,7 @@ afterEach(cleanup);
 
 beforeEach(() => {
   events.length = 0;
+  emitted.length = 0;
   vi.clearAllMocks();
   mockDirty.mockReturnValue(false);
   // Re-register default mock implementations cleared by clearAllMocks.
@@ -156,6 +165,81 @@ describe("PinWindow 关窗 / 删除流程", () => {
     // Addressed to this window: full flush → trash → close sequence.
     emit("pin:delete-requested", { data: "n1", sender: "pin-n1" });
     await waitFor(() => expect(events).toEqual(["flush", "trashNote", "closePinnedWindow"]));
+  });
+});
+
+describe("PinWindow 更新屏障（pin:flush-requested）", () => {
+  function emit(name: string, ev?: unknown) {
+    (Events as unknown as { __emit: (n: string, e?: unknown) => void }).__emit(name, ev);
+  }
+  function acks() {
+    return emitted.filter((e) => e.name === "pin:flushed");
+  }
+
+  it("干净落库后按 flush → 判空 → ack 回报 dirty=false", async () => {
+    renderPinWindow();
+    await waitFor(() => expect(screen.getByRole("button")).toBeTruthy());
+
+    emit("pin:flush-requested", { data: { token: "t1" } });
+
+    await waitFor(() => expect(events).toEqual(["flush", "discardIfEmpty"]));
+    await waitFor(() =>
+      expect(acks()).toEqual([{ name: "pin:flushed", data: { token: "t1", noteID: "n1", dirty: false } }]),
+    );
+  });
+
+  // A note that still holds unsaved text must not be judged empty: the barrier
+  // reads dirty=true and cancels the update round.
+  it("flush 后仍 dirty 时不判空，ack 回报 dirty=true", async () => {
+    mockDirty.mockReturnValue(true);
+    renderPinWindow();
+    await waitFor(() => expect(screen.getByRole("button")).toBeTruthy());
+
+    emit("pin:flush-requested", { data: { token: "t2" } });
+
+    await waitFor(() => expect(acks()).toEqual([{ name: "pin:flushed", data: { token: "t2", noteID: "n1", dirty: true } }]));
+    expect(events).toEqual(["flush"]);
+    expect(events).not.toContain("discardIfEmpty");
+    mockDirty.mockReturnValue(false);
+  });
+
+  it("flush 抛错也必须有 ack，且按脏处理", async () => {
+    mockFlush.mockRejectedValueOnce(new Error("db busy"));
+    renderPinWindow();
+    await waitFor(() => expect(screen.getByRole("button")).toBeTruthy());
+
+    emit("pin:flush-requested", { data: { token: "t3" } });
+
+    await waitFor(() => expect(acks()).toHaveLength(1));
+    expect(acks()[0].data).toMatchObject({ token: "t3", dirty: true });
+  });
+
+  // 回收站占位视图没有编辑器：没有缓冲可言，不该让它一票否决更新。
+  it("未挂编辑器（已删除占位）时回报 dirty=false", async () => {
+    vi.mocked(api.listNotes).mockResolvedValue([]);
+    vi.mocked(api.listTrash).mockResolvedValue([{ ...LIVE_NOTE, deletedAt: 100 }]);
+    renderPinWindow();
+    await waitFor(() => expect(screen.getByText("该笔记已被删除。")).toBeTruthy());
+
+    emit("pin:flush-requested", { data: { token: "t4" } });
+
+    await waitFor(() => expect(acks()).toHaveLength(1));
+    expect(acks()[0].data).toMatchObject({ token: "t4", dirty: false });
+    expect(events).toEqual([]);
+
+    // clearAllMocks keeps implementations, so hand the defaults back.
+    vi.mocked(api.listNotes).mockResolvedValue([LIVE_NOTE]);
+    vi.mocked(api.listTrash).mockResolvedValue([]);
+  });
+
+  it("没有 token 时仍回报，缺字段不影响屏障", async () => {
+    renderPinWindow();
+    await waitFor(() => expect(screen.getByRole("button")).toBeTruthy());
+
+    emit("pin:flush-requested", { data: null });
+
+    await waitFor(() => expect(acks()).toHaveLength(1));
+    expect(acks()[0].data).toMatchObject({ token: "", noteID: "n1", dirty: false });
   });
 });
 
