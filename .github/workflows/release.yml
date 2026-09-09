@@ -4,7 +4,8 @@ name: Release
 # workflow_dispatch 只构建并上传产物，不发 release，用来验证流水线。
 #
 # 只有 macOS：pin-only 形态依赖 NSStatusItem 与原生 frame resize，Windows/Linux 出界。
-# 产物：bin/PinNote.app -> .zip（ditto）+ .dmg（wails3 样式化，失败则回退 hdiutil）
+# 产物：bin/PinNote.app -> universal .zip（自更新唯一入口）+ .dmg（wails3 样式化，失败则回退 hdiutil）
+# 详见 docs/adr/0003-auto-update.md：zip 必须是「唯一一个顶层条目」，且要配 .sig 才能被客户端装上。
 on:
   push:
     tags:
@@ -30,7 +31,7 @@ env:
 
 jobs:
   release:
-    name: Build and publish macOS arm64
+    name: Build and publish macOS universal
     runs-on: macos-latest
 
     steps:
@@ -99,8 +100,8 @@ jobs:
       - name: Test Go
         run: |
           set -euo pipefail
-          go vet .
-          go test -count=1 .
+          go vet . ./tools/...
+          go test -count=1 . ./tools/...
 
       - name: Stamp version into the bundle
         env:
@@ -110,8 +111,29 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $NUMBER" build/darwin/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NUMBER" build/darwin/Info.plist
 
+      # 单一版本事实源：同一个 number 既写进 plist 又注入 main.Version（ADR-0003 B3）。
+      # universal 而不是 uname -m：一条 release 一个主产物，Intel 与 Apple Silicon 共用，
+      # 否则 amd64 用户永远匹配不到 asset（B4）。
       - name: Package
-        run: wails3 package
+        env:
+          PINNOTE_VERSION: ${{ steps.version.outputs.number }}
+        run: wails3 task darwin:package:universal
+
+      # 换包后 LaunchServices 按 CFBundleExecutable 找入口；这里指错就等于
+      # 「更新完成，双击打不开」，必须在发版前拦住（ADR-0003 B2）。
+      - name: Verify bundle entry point
+        run: |
+          set -euo pipefail
+          entry=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "bin/${APP_NAME}.app/Contents/Info.plist")
+          test -x "bin/${APP_NAME}.app/Contents/MacOS/${entry}" || {
+            echo "::error::CFBundleExecutable=${entry} 在 Contents/MacOS 里不存在或不可执行"
+            ls -la "bin/${APP_NAME}.app/Contents/MacOS"
+            exit 1
+          }
+          test "$(ls "bin/${APP_NAME}.app/Contents/MacOS" | wc -l | tr -d ' ')" = 1 || {
+            echo "::error::Contents/MacOS 里有多余文件，自更新换包后会留下错误的入口"
+            exit 1
+          }
 
       - name: Verify code signature
         run: codesign --verify --deep --strict --verbose=2 "bin/${APP_NAME}.app"
@@ -146,19 +168,49 @@ jobs:
           NUMBER: ${{ steps.version.outputs.number }}
         run: |
           set -euo pipefail
-          arch=$(uname -m)
-          base="${APP_NAME}-${NUMBER}-macOS-${arch}"
+          base="${APP_NAME}-${NUMBER}-macOS-universal"
           mkdir -p dist
           mv "bin/${APP_NAME}.dmg" "dist/${base}.dmg"
-          # --keepParent 必须有：缺它 zip 根目录会变成 Contents/，解压出来不是可安装的 bundle。
-          ditto -c -k --keepParent --sequesterRsrc "bin/${APP_NAME}.app" "dist/${base}.zip"
+          # --keepParent：zip 根目录必须是 PinNote.app 本身。
+          # 不能加 --sequesterRsrc：它会在根目录附带 __MACOSX/，而 updater 硬性要求
+          # 「恰好一个顶层条目」，多一条就直接拒绝解包（ADR-0003 B1）。
+          ditto -c -k --keepParent "bin/${APP_NAME}.app" "dist/${base}.zip"
+          roots=$(unzip -Z1 "dist/${base}.zip" | cut -d/ -f1 | sort -u)
+          if [ "$(printf '%s\n' "$roots" | wc -l | tr -d ' ')" != 1 ] || [ "$roots" != "${APP_NAME}.app" ]; then
+            echo "::error::zip 顶层不是唯一的 ${APP_NAME}.app，自更新无法解包：$(printf '%s ' $roots)"
+            exit 1
+          fi
           (cd dist && shasum -a 256 "${base}.zip" "${base}.dmg" > SHA256SUMS.txt)
           {
             echo "- 版本：v${NUMBER}"
-            echo "- 架构：${arch}（未做 universal，amd64 需另加构建矩阵）"
+            echo "- 架构：universal（arm64 + amd64 同一产物）"
             echo "- 签名：ad-hoc，未经 Developer ID 签名与 notarize"
+            echo "- 更新签名：\`${base}.zip.sig\` = 对 zip 的 sha256 摘要做 ed25519 签名"
             echo "- 文件：\`$(cd dist && ls | tr '\n' ' ')\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # 自更新走 Go 下载，不带 quarantine xattr，Gatekeeper 不会复核换包后的 bundle，
+      # 所以这把 ed25519 签名是唯一的信任根：缺它就没有自动更新（ADR-0003 D5/D6）。
+      - name: Sign release artifacts
+        env:
+          NUMBER: ${{ steps.version.outputs.number }}
+          PINNOTE_UPDATE_KEY: ${{ secrets.PINNOTE_UPDATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PINNOTE_UPDATE_KEY}" ]; then
+            echo "::error::缺少 Secret PINNOTE_UPDATE_KEY：先 go run ./tools/sign-release keygen，私钥进 Secrets，公钥进 update_public_key.go"
+            exit 1
+          fi
+          # 公钥从源码里读，而不是再配一个地方：这两处一旦对不上，表现是
+          # 「所有客户端从此再也收不到更新」，而报错完全指不到真正的原因。
+          pubkey=$(sed -n 's/^const updatePublicKeyHex = "\(.*\)"$/\1/p' update_public_key.go)
+          if [ -z "$pubkey" ]; then
+            echo "::error::update_public_key.go 里还没有公钥，先粘贴 keygen 输出的公钥"
+            exit 1
+          fi
+          base="${APP_NAME}-${NUMBER}-macOS-universal"
+          go run ./tools/sign-release sign -key-env PINNOTE_UPDATE_KEY "dist/${base}.zip"
+          go run ./tools/sign-release verify -key "$pubkey" "dist/${base}.zip"
 
       - name: Upload workflow artifacts
         if: steps.version.outputs.publish != 'true'
@@ -177,6 +229,7 @@ jobs:
           prerelease: auto
           files: |
             dist/*.zip
+            dist/*.zip.sig
             dist/*.dmg
             dist/SHA256SUMS.txt
           body: |
@@ -185,5 +238,6 @@ jobs:
             2. 构建使用 ad-hoc 签名，未经 Apple notarize，首次打开会被 Gatekeeper 拦下：**右键 → 打开** 确认一次即可；若仍被拒：
                `xattr -dr com.apple.quarantine /Applications/PinNote.app`
             3. 完整性校验：`shasum -a 256 -c SHA256SUMS.txt`。
+            4. universal 产物在 Apple Silicon 与 Intel 上通用；装好之后应用内会自己检查并升级到更新的 release。
 
             需要 Developer ID 签名 + notarize，要先配证书与 notary API 凭据，见 README 的「发版」章节。

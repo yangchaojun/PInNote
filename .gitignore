@@ -13,3 +13,4 @@ prototype/**/node_modules
 prototype/**/dist
 node_modules/
 /pinnote
+/dist/

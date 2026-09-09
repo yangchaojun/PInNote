@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -26,6 +27,53 @@ func (h *appHandle) emit(name string, data any) {
 	}
 }
 
+// on subscribes to an application event once the app exists. The returned
+// function removes the listener; it is a no-op when there is no app yet.
+func (h *appHandle) on(name string, callback func(*application.CustomEvent)) func() {
+	h.mu.Lock()
+	app := h.app
+	h.mu.Unlock()
+	if app == nil {
+		return func() {}
+	}
+	return app.Event.On(name, callback)
+}
+
+// pinnedWindowPrefix is the window-name prefix for pin windows; the note id is
+// the remainder.
+const pinnedWindowPrefix = "pin-"
+
+const (
+	// flushTopic asks every pin window to persist its editor buffer; it
+	// carries the token of the round being answered.
+	flushTopic = "pin:flush-requested"
+
+	// flushAckTopic is the answer to flushTopic.
+	flushAckTopic = "pin:flushed"
+)
+
+// flushRequest is the barrier payload sent to every renderer.
+type flushRequest struct {
+	Token string `json:"token"`
+}
+
+// flushRound is one in-flight barrier: the token identifying it plus the
+// per-window channels its answers land in. An answer must carry that token, so
+// a window that was slow on a previous round cannot be mistaken for consent on
+// this one.
+type flushRound struct {
+	token   string
+	waiters map[string]chan bool
+	acked   int
+}
+
+// flushAnswer is a decoded pin:flushed.
+type flushAnswer struct {
+	token  string
+	noteID string
+	dirty  bool
+}
+
 // WindowService manages the pin windows: one frameless always-on-top window
 // per live note. It is also the single source of truth for the theme, which
 // is persisted in the settings table and broadcast to every window.
@@ -35,6 +83,15 @@ type WindowService struct {
 
 	mu    sync.Mutex
 	theme string // "light" or "dark"; drives native window background colours.
+
+	flushMu  sync.Mutex
+	flushing *flushRound
+
+	// Barrier seams: enumerating and addressing windows requires a running
+	// application, so both are injectable and the protocol stays testable
+	// (same style as noteWindowOpener).
+	listPins  func() []string
+	broadcast func(name string, data any)
 }
 
 func NewWindowService(h *appHandle, db *sql.DB) *WindowService {
@@ -45,7 +102,10 @@ func NewWindowService(h *appHandle, db *sql.DB) *WindowService {
 	if theme != "light" {
 		theme = "dark"
 	}
-	return &WindowService{handle: h, db: db, theme: theme}
+	s := &WindowService{handle: h, db: db, theme: theme}
+	s.listPins = s.livePinNoteIDs
+	s.broadcast = h.emit
+	return s
 }
 
 func (s *WindowService) Theme() string {
@@ -90,7 +150,7 @@ func (s *WindowService) SetTheme(mode string) error {
 }
 
 // PinnedWindowName returns the internal window name for a pinned note.
-func PinnedWindowName(noteID string) string { return "pin-" + noteID }
+func PinnedWindowName(noteID string) string { return pinnedWindowPrefix + noteID }
 
 // OpenPinnedWindow opens a frameless, always-on-top desktop window showing
 // the given note. If the window already exists it is focused instead. Returns
@@ -169,10 +229,10 @@ func (s *WindowService) RequestFrontmostDelete() error {
 		return fmt.Errorf("application not ready")
 	}
 	for _, win := range s.handle.app.Window.GetAll() {
-		if !strings.HasPrefix(win.Name(), "pin-") || !win.IsFocused() {
+		if !strings.HasPrefix(win.Name(), pinnedWindowPrefix) || !win.IsFocused() {
 			continue
 		}
-		win.EmitEvent("pin:delete-requested", strings.TrimPrefix(win.Name(), "pin-"))
+		win.EmitEvent("pin:delete-requested", strings.TrimPrefix(win.Name(), pinnedWindowPrefix))
 		return nil
 	}
 	return nil
@@ -198,4 +258,123 @@ func RestoreAllNoteWindows(notes *NoteService, windows noteWindowOpener) {
 			log.Printf("restore note window for %s: %v", n.ID, err)
 		}
 	}
+}
+
+// livePinNoteIDs lists the notes that currently have a pin window, which is
+// exactly the set that must be persisted before anything is allowed to quit.
+func (s *WindowService) livePinNoteIDs() []string {
+	if s.handle.app == nil {
+		return nil
+	}
+	var ids []string
+	for _, win := range s.handle.app.Window.GetAll() {
+		if name := win.Name(); strings.HasPrefix(name, pinnedWindowPrefix) {
+			ids = append(ids, strings.TrimPrefix(name, pinnedWindowPrefix))
+		}
+	}
+	return ids
+}
+
+// startFlushListener wires the ack channel. Called once from main, after the
+// application handle has been set.
+func (s *WindowService) startFlushListener() {
+	s.handle.on(flushAckTopic, s.receiveFlushAck)
+}
+
+// requestFlushAll asks every open pin window to persist its buffer and waits
+// for all of them to answer. ADR-0003 D7: the built-in card's Restart button
+// quits through the updater itself with no veto available on the Go side, so
+// the swap is only safe once no renderer holds text that has not reached the
+// database. Anything short of a full set of clean answers is an error,
+// including silence.
+func (s *WindowService) requestFlushAll(timeout time.Duration) error {
+	targets := s.listPins()
+	if len(targets) == 0 {
+		return nil
+	}
+	token := newID()
+	round := &flushRound{token: token, waiters: make(map[string]chan bool, len(targets))}
+	for _, id := range targets {
+		round.waiters[id] = make(chan bool, 1)
+	}
+	s.flushMu.Lock()
+	if s.flushing != nil {
+		s.flushMu.Unlock()
+		return fmt.Errorf("another flush is already running")
+	}
+	s.flushing = round
+	s.flushMu.Unlock()
+	defer func() {
+		s.flushMu.Lock()
+		s.flushing = nil
+		s.flushMu.Unlock()
+	}()
+
+	s.broadcast(flushTopic, flushRequest{Token: token})
+
+	deadline := time.After(timeout)
+	for _, id := range targets {
+		select {
+		case dirty := <-round.waiters[id]:
+			if dirty {
+				return fmt.Errorf("note %s still has unsaved edits", id)
+			}
+		case <-deadline:
+			s.flushMu.Lock()
+			missing := len(targets) - round.acked
+			s.flushMu.Unlock()
+			return fmt.Errorf("%d pin window(s) did not confirm saving", missing)
+		}
+	}
+	return nil
+}
+
+// receiveFlushAck records one window answer.
+func (s *WindowService) receiveFlushAck(e *application.CustomEvent) {
+	s.flushMu.Lock()
+	round := s.flushing
+	s.flushMu.Unlock()
+	if round == nil || e == nil {
+		return
+	}
+	answer := decodeFlushAck(e)
+	if answer.token != round.token {
+		return
+	}
+	waiter, ok := round.waiters[answer.noteID]
+	if !ok {
+		return
+	}
+	select {
+	case waiter <- answer.dirty:
+		s.flushMu.Lock()
+		round.acked++
+		s.flushMu.Unlock()
+	default:
+		// Already answered for this round.
+	}
+}
+
+// decodeFlushAck pulls the round token, note id and dirty flag out of an ack.
+// Unregistered Wails events arrive as decoded JSON, so the payload is read
+// defensively instead of being unmarshalled into a struct; a missing or
+// mistyped token therefore answers as "not this round", which is the safe
+// direction. The sending window name wins over the payload: a renderer must not
+// be able to ack for a note it does not own.
+func decodeFlushAck(e *application.CustomEvent) flushAnswer {
+	data, _ := e.Data.(map[string]any)
+	answer := flushAnswer{
+		token:  stringField(data, "token"),
+		noteID: stringField(data, "noteID"),
+	}
+	if sender := strings.TrimPrefix(e.Sender, pinnedWindowPrefix); sender != e.Sender && sender != "" {
+		answer.noteID = sender
+	}
+	answer.dirty, _ = data["dirty"].(bool)
+	return answer
+}
+
+func stringField(data map[string]any, key string) string {
+	value, _ := data[key].(string)
+	return value
 }
