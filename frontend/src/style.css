@@ -192,7 +192,11 @@ kbd {
   background: var(--pin-ring);
 }
 
+/* width: 100% is load-bearing: WKWebView doesn't clamp a stretched column
+ * flex item to the container, so the max-content box keeps overflowing (the
+ * horizontal scrollbar on the panel) and text-overflow never paints. */
 .tray-panel-item-title {
+  width: 100%;
   color: var(--title);
   font-size: 13px;
   font-weight: 500;
@@ -202,6 +206,7 @@ kbd {
 }
 
 .tray-panel-item-excerpt {
+  width: 100%;
   color: var(--secondary);
   font-size: 12px;
   white-space: nowrap;
