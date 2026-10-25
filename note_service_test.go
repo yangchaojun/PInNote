@@ -231,31 +231,31 @@ func (f *fakeOpener) OpenPinnedWindow(id string) (bool, error) {
 	return true, nil
 }
 
-func TestRestoreAllNoteWindows(t *testing.T) {
+func TestRestoreLatestNoteWindow(t *testing.T) {
 	s := newTestService(t)
-	live1, _ := s.CreateNote("第一")
-	live2, _ := s.CreateNote("第二")
+	s.CreateNote("旧笔记") // stays closed — startup opens only the newest note
+	latest, _ := s.CreateNote("最新笔记")
 	trashed, _ := s.CreateNote("被删")
 	if _, err := s.TrashNote(trashed.ID); err != nil {
 		t.Fatal(err)
 	}
 
 	opener := &fakeOpener{}
-	RestoreAllNoteWindows(s, opener)
+	RestoreLatestNoteWindow(s, opener)
 
-	// Every live note gets its window back; trashed notes stay closed.
-	if len(opener.opened) != 2 {
-		t.Fatalf("opened = %v, want exactly the 2 live notes", opener.opened)
+	// Only the most recently updated live note gets its window back; the
+	// older live note and the trashed one stay closed.
+	if len(opener.opened) != 1 || opener.opened[0] != latest.ID {
+		t.Fatalf("opened = %v, want only the latest live note %s", opener.opened, latest.ID)
 	}
-	got := map[string]bool{}
-	for _, id := range opener.opened {
-		got[id] = true
-	}
-	if !got[live1.ID] || !got[live2.ID] {
-		t.Errorf("opened = %v, want %s and %s", opener.opened, live1.ID, live2.ID)
-	}
-	if got[trashed.ID] {
-		t.Errorf("trashed note must not be restored")
+}
+
+func TestRestoreLatestNoteWindowNoNotes(t *testing.T) {
+	s := newTestService(t)
+	opener := &fakeOpener{}
+	RestoreLatestNoteWindow(s, opener)
+	if len(opener.opened) != 0 {
+		t.Fatalf("opened = %v, want none when there are no live notes", opener.opened)
 	}
 }
 
