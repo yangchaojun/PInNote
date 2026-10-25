@@ -29,6 +29,18 @@ var pushpinIcon = func() *ui.SVG {
 	return icon
 }()
 
+//go:embed assets/trash.svg
+var trashSVG []byte
+
+// trashIcon is the delete buttons' glyph.
+var trashIcon = func() *ui.SVG {
+	icon, err := ui.ParseSVG(trashSVG)
+	if err != nil {
+		panic("parse trash.svg: " + err.Error())
+	}
+	return icon
+}()
+
 // autosaveDelay is the debounce between the last edit and the write.
 const autosaveDelay = 400 * time.Millisecond
 
@@ -52,12 +64,13 @@ type PinWindow struct {
 
 	saveTimer *time.Timer
 
-	state    noteState
-	title    string
-	closing  bool // a close/delete flow is already running
-	helpOpen bool
-	linkOpen bool
-	linkURL  string
+	state         noteState
+	title         string
+	closing       bool // a close/delete flow is already running
+	helpOpen      bool
+	linkOpen      bool
+	linkURL       string
+	confirmDelete bool // the header delete button's confirmation dialog
 }
 
 // newPinWindow creates the window and shows it ready to type.
@@ -234,7 +247,15 @@ func (p *PinWindow) view(c *ui.Context) {
 	// claim the keys ahead of the focused editor (⌘⌫ deletes the note, not
 	// the line). ⌘B / ⌘I / ⌘K are the editor's own; the theme toggle lives
 	// on the app menu so it fires once; Esc closes a modal on its own.
-	c.OnShortcut(ui.Cmd, ui.KeyBackspace, p.deleteNote)
+	c.OnShortcut(ui.Cmd, ui.KeyBackspace, func() {
+		// Window shortcuts fire over open modals; while the delete dialog
+		// asks for confirmation, ⌘⌫ must not answer it with an instant
+		// delete (issue #6).
+		if p.confirmDelete {
+			return
+		}
+		p.deleteNote()
+	})
 	c.OnShortcut(ui.Cmd|ui.Shift, ui.KeySlash, func() { p.helpOpen = !p.helpOpen })
 
 	ui.Column(c).Fill().Background(p.pinBackground(t)).Children(func() {
@@ -247,14 +268,23 @@ func (p *PinWindow) view(c *ui.Context) {
 		}
 		p.linkDialog(c, t)
 		p.helpDialog(c, t)
+		p.confirmDeleteDialog(c, t)
 	})
 }
 
-// header is the drag handle strip: pin glyph, title tooltip, close button.
+// header is the drag handle strip: pin glyph, title tooltip, delete and
+// collapse buttons.
 func (p *PinWindow) header(c *ui.Context, t *ui.Theme) {
 	ui.Row(c).Height(28).Padding(0, 10, 0, 6).AlignItems(ui.Center).Gap(6).Children(func() {
 		ui.Icon(c, pushpinIcon).FontSize(13).TextColor(t.TextMuted).Label("PinNote")
 		ui.Box(c).Grow(1).Height(20).DragWindow().Tooltip(p.titleTooltip())
+		if p.state == stateLive {
+			if ui.Button(c, "").Label("删除笔记").MinWidth(24).Height(22).Children(func() {
+				ui.Icon(c, trashIcon).FontSize(13)
+			}).Clicked() {
+				p.confirmDelete = true
+			}
+		}
 		if ui.Button(c, "×").Label("收起笔记").FontSize(13).MinWidth(24).Height(22).Clicked() {
 			p.collapse()
 		}
@@ -329,6 +359,28 @@ func (p *PinWindow) linkDialog(c *ui.Context, t *ui.Theme) {
 				if ui.PrimaryButton(c, "确定").Clicked() || input.Submitted() {
 					p.doc.SetLink(normalizeLinkURL(p.linkURL))
 					p.linkOpen = false
+				}
+			})
+		})
+	})
+}
+
+// confirmDeleteDialog is the header delete button's second confirmation
+// (issue #6): the trash keeps the note 60 days, but it has no UI to dig it
+// back out, so one click must not be enough. Esc or clicking outside
+// cancels.
+func (p *PinWindow) confirmDeleteDialog(c *ui.Context, t *ui.Theme) {
+	ui.Modal(c, &p.confirmDelete, func() {
+		ui.Column(c).Width(300).Gap(10).Children(func() {
+			ui.Text(c, "删除这条笔记？").FontSize(13).Bold()
+			ui.Text(c, "删除后进入回收站保留 60 天，到期自动清除；回收站没有恢复入口。").FontSize(12).TextColor(t.TextMuted)
+			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
+				if ui.Button(c, "取消").Clicked() {
+					p.confirmDelete = false
+				}
+				if ui.Button(c, "删除").TextColor(t.Danger).Clicked() {
+					p.confirmDelete = false
+					p.deleteNote()
 				}
 			})
 		})
