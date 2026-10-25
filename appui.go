@@ -16,11 +16,14 @@ type pinApp struct {
 	windows *WindowService
 	updates *UpdateService
 	panel   *Panel
+	trash   *TrashPanel
 
 	// notesCache mirrors the live notes (updated_at desc) for the panel and
-	// the pin windows; trashSet holds the ids currently in the trash so a
-	// window can show its deleted-note placeholder instead of vanishing.
+	// the pin windows; trashCache mirrors the trashed notes (deleted_at
+	// desc) for the trash panel, and trashSet holds their ids so a window
+	// can show its deleted-note placeholder instead of vanishing.
 	notesCache []Note
+	trashCache []Note
 	trashSet   map[string]bool
 
 	// quitting is set by OnBeforeQuit so window close handlers let the
@@ -52,6 +55,7 @@ func (a *pinApp) refreshNotes() {
 		log.Printf("list trash: %v", err)
 		return
 	}
+	a.trashCache = trash
 	a.trashSet = map[string]bool{}
 	for _, n := range trash {
 		a.trashSet[n.ID] = true
@@ -62,6 +66,9 @@ func (a *pinApp) refreshNotes() {
 	}
 	if a.panel != nil {
 		a.panel.win.Update(func() {})
+	}
+	if a.trash != nil {
+		a.trash.win.Update(func() {})
 	}
 }
 

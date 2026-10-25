@@ -277,10 +277,9 @@ func (s *NoteService) TrashNote(id string) (Note, error) {
 	return s.GetNote(id)
 }
 
-// RestoreNote moves a note out of the trash back into the live list.
-//
-// FROZEN (pin-only form factor): the trash has no UI in this form factor;
-// kept for data compatibility. New code must not call it.
+// RestoreNote moves a note out of the trash back into the live list — the
+// trash panel's 恢复 action (#8). The bump of updated_at makes a restored
+// note the newest live note, so it is what a fresh launch reopens.
 func (s *NoteService) RestoreNote(id string) (Note, error) {
 	res, err := s.db.Exec(
 		`UPDATE notes SET deleted_at = NULL, updated_at = ?
@@ -300,7 +299,9 @@ func (s *NoteService) RestoreNote(id string) (Note, error) {
 // DeleteNoteForever removes a note from the database permanently. Only notes
 // already in the trash can be deleted forever.
 //
-// FROZEN (pin-only form factor): same as RestoreNote — no trash UI exists.
+// FROZEN (pin-only form factor): the trash panel only restores and empties
+// in bulk (#8); no per-note permanent delete exists. Kept for data
+// compatibility; new code must not call it.
 func (s *NoteService) DeleteNoteForever(id string) error {
 	res, err := s.db.Exec(`DELETE FROM notes WHERE id = ? AND deleted_at IS NOT NULL`, id)
 	if err != nil {
@@ -313,9 +314,8 @@ func (s *NoteService) DeleteNoteForever(id string) error {
 	return nil
 }
 
-// EmptyTrash permanently deletes every note in the trash.
-//
-// FROZEN (pin-only form factor): same as RestoreNote — no trash UI exists.
+// EmptyTrash permanently deletes every note in the trash — the trash
+// panel's 清空回收站 action (#8), behind the panel's confirmation.
 func (s *NoteService) EmptyTrash() error {
 	if _, err := s.db.Exec(`DELETE FROM notes WHERE deleted_at IS NOT NULL`); err != nil {
 		return fmt.Errorf("empty trash: %w", err)
@@ -364,10 +364,9 @@ func (s *NoteService) PurgeExpiredTrash() (int64, error) {
 	return count, nil
 }
 
-// TrashRetentionDays exposes the retention window to the frontend.
-//
-// FROZEN (pin-only form factor): the purge countdown UI is gone; the constant
-// itself still drives the startup purge.
+// GetTrashRetentionDays exposes the retention window to the frontend — the
+// trash panel's per-row countdown (#8); the constant also drives the
+// startup purge.
 func (s *NoteService) GetTrashRetentionDays() int64 { return TrashRetentionDays }
 
 // notifyChanged refreshes the shared UI state after any mutation.
