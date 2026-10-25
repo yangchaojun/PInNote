@@ -170,11 +170,13 @@ func (s *NoteService) ListNotes() ([]Note, error) {
 // latestLiveNote returns the most recently updated live note, or nil when
 // there are none — the menu bar icon's "get back to my notes" lookup. Kept
 // unexported so the bound service API stays the frontend's only read path.
+// updated_at has second resolution, so rowid breaks same-second ties toward
+// the later insert.
 func (s *NoteService) latestLiveNote() (*Note, error) {
 	n, err := scanNote(s.db.QueryRow(
 		`SELECT ` + noteColumns + ` FROM notes
 		 WHERE deleted_at IS NULL
-		 ORDER BY updated_at DESC LIMIT 1`))
+		 ORDER BY updated_at DESC, rowid DESC LIMIT 1`))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

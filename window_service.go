@@ -142,18 +142,22 @@ type noteWindowOpener interface {
 	OpenPinnedWindow(noteID string) (bool, error)
 }
 
-// RestoreAllNoteWindows reopens a window for every live note. Called once at
-// startup so the whole desktop comes back after an app restart — closing a
-// window is only "collapse"; the note (and its window) returns on relaunch.
-func RestoreAllNoteWindows(notes *NoteService, windows noteWindowOpener) {
-	list, err := notes.ListNotes()
+// RestoreLatestNoteWindow reopens only the most recently updated live note's
+// window, called once at startup (issue #4): relaunching must not bury the
+// desktop under every note at once. Closing a window is still only
+// "collapse" — the other live notes come back on demand through the tray
+// panel and the tray icon's summon-latest click. No live notes → the app
+// stays resident silently.
+func RestoreLatestNoteWindow(notes *NoteService, windows noteWindowOpener) {
+	latest, err := notes.latestLiveNote()
 	if err != nil {
-		log.Printf("list notes at startup: %v", err)
+		log.Printf("load latest note at startup: %v", err)
 		return
 	}
-	for _, n := range list {
-		if _, err := windows.OpenPinnedWindow(n.ID); err != nil {
-			log.Printf("restore note window for %s: %v", n.ID, err)
-		}
+	if latest == nil {
+		return
+	}
+	if _, err := windows.OpenPinnedWindow(latest.ID); err != nil {
+		log.Printf("restore note window for %s: %v", latest.ID, err)
 	}
 }

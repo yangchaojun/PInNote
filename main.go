@@ -89,8 +89,9 @@ func main() {
 			log.Printf("purged %d expired note(s) from trash", purged)
 		}
 
-		// Restore a window for every live note from the previous session.
-		RestoreAllNoteWindows(app.notes, app.windows)
+		// Reopen only the latest note's window; the rest are one tray-panel
+		// click away (issue #4).
+		RestoreLatestNoteWindow(app.notes, app.windows)
 
 		app.updates.Start()
 		defer app.updates.Stop()
