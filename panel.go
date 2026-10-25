@@ -109,7 +109,9 @@ func (p *Panel) row(c *ui.Context, t *ui.Theme, n Note) {
 		})
 		// The engine hands a click to the innermost interactive element, so
 		// this button never fires the row's open action (issue #6).
-		if ui.Button(c, "删除").Label("删除笔记 " + title).FontSize(11).Height(22).TextColor(t.Danger).Clicked() {
+		if ui.Button(c, "").Label("删除笔记 " + title).MinWidth(24).Height(22).Children(func() {
+			ui.Icon(c, trashIcon).FontSize(13)
+		}).Clicked() {
 			p.confirmDeleteID = n.ID
 			p.confirmDelete = true
 		}

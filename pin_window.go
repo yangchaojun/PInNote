@@ -29,6 +29,18 @@ var pushpinIcon = func() *ui.SVG {
 	return icon
 }()
 
+//go:embed assets/trash.svg
+var trashSVG []byte
+
+// trashIcon is the delete buttons' glyph.
+var trashIcon = func() *ui.SVG {
+	icon, err := ui.ParseSVG(trashSVG)
+	if err != nil {
+		panic("parse trash.svg: " + err.Error())
+	}
+	return icon
+}()
+
 // autosaveDelay is the debounce between the last edit and the write.
 const autosaveDelay = 400 * time.Millisecond
 
@@ -267,7 +279,9 @@ func (p *PinWindow) header(c *ui.Context, t *ui.Theme) {
 		ui.Icon(c, pushpinIcon).FontSize(13).TextColor(t.TextMuted).Label("PinNote")
 		ui.Box(c).Grow(1).Height(20).DragWindow().Tooltip(p.titleTooltip())
 		if p.state == stateLive {
-			if ui.Button(c, "删除").Label("删除笔记").FontSize(11).Height(22).TextColor(t.Danger).Clicked() {
+			if ui.Button(c, "").Label("删除笔记").MinWidth(24).Height(22).Children(func() {
+				ui.Icon(c, trashIcon).FontSize(13)
+			}).Clicked() {
 				p.confirmDelete = true
 			}
 		}

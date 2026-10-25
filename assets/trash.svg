@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- A trash can: lid with a handle, and a slotted body. -->
+  <path d="M4 7h16"/>
+  <path d="M9 7V5c0-.6.4-1 1-1h4c.6 0 1 .4 1 1v2"/>
+  <path d="M6.5 7l.8 12c.06.92.8 1.6 1.7 1.6h6c.9 0 1.64-.68 1.7-1.6l.8-12"/>
+  <path d="M10 11v6"/>
+  <path d="M14 11v6"/>
+</svg>
