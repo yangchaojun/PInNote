@@ -52,8 +52,9 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-产物（`dist/`）：`PinNote-<版本>-macos-universal.zip`、`PinNote-<版本>.dmg`、`update-darwin-arm64.json`、
-`update-darwin-amd64.json`（自更新清单，含 ed25519 签名）。
+产物（`dist/darwin-universal/`）：`PinNote <版本>.dmg`、`pinnote-<版本>-darwin-universal.tar.gz`
+（自更新载荷）、`update-darwin-universal.json`（自更新清单，含 ed25519 签名；feed 在构建期
+烧进二进制，与运行架构无关）。
 
 - 手动 `workflow_dispatch` 只构建并上传 workflow 产物，**不发 release**，用来验证流水线。
 - tag 与 `mygo.json` 版本不一致时以 tag 为准，CI 在打包前改写 `mygo.json`（仓库里那份不动）。

@@ -73,5 +73,5 @@ Restart & Apply）都无法越过它——比原协议更强。
 - 托盘「检查更新」不再有 ToolTip（mygo MenuItem 无该 setter）；上次检查
   时间仍持久化在 settings 表，标签与角标行为不变。
 - 发版产物从 `.zip + .sig + SHA256SUMS` 换为 mygo 的清单模型
-  （`update-darwin-*.json` + 差量包）；已安装的 Wails 版无法就地迁移到
+  （`pinnote-<版本>-darwin-universal.tar.gz` + `update-darwin-universal.json` + 差量包）；已安装的 Wails 版无法就地迁移到
   mygo 更新通道——最后一个 Wails 版之后需手动装一次 `.dmg`。

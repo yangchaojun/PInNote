@@ -4,8 +4,9 @@ name: Release
 # workflow_dispatch 只构建并上传产物，不发 release，用来验证流水线。
 #
 # 只有 macOS：pin-only 形态依赖 NSStatusItem 与原生 frame resize，Windows/Linux 出界。
-# 产物（dist/）：universal .zip + .dmg + update-darwin-{arm64,amd64}.json（自更新清单，
-# 含 ed25519 签名，由 mygo build 用 MYGO_UPDATER_PRIVATE_KEY 签出）+ 差量包。
+# 产物（dist/darwin-universal/）：.dmg + pinnote-<版本>-darwin-universal.tar.gz
+# （自更新载荷）+ update-darwin-universal.json（自更新清单，含 ed25519 签名，
+# 由 mygo build 用 MYGO_UPDATER_PRIVATE_KEY 签出；feed 构建期烧进二进制，与运行架构无关）+ 差量包。
 # 自更新只信编译期钉死在 mygo.json updates.publicKey 的公钥（ADR-0003 D5/D6 延续）。
 on:
   push:
@@ -153,7 +154,7 @@ jobs:
           NUMBER: ${{ steps.version.outputs.number }}
         run: |
           set -euo pipefail
-          app="dist/${APP_NAME}.app"
+          app="dist/darwin-universal/${APP_NAME}.app"
           test -d "$app" || { ls -R dist | head -40; echo "::error::找不到 ${app}"; exit 1; }
           entry=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "${app}/Contents/Info.plist")
           test -x "${app}/Contents/MacOS/${entry}" || {
@@ -167,15 +168,15 @@ jobs:
           NUMBER: ${{ steps.version.outputs.number }}
         run: |
           set -euo pipefail
-          ls dist > /tmp/dist-list.txt
-          if ! grep -q "^update-darwin-arm64.json$" /tmp/dist-list.txt; then
-            echo "::warning::缺少 update-darwin-arm64.json（更新签名被跳过？）：这个版本装不上自动更新"
+          out=dist/darwin-universal
+          if [ ! -f "$out/update-darwin-universal.json" ]; then
+            echo "::warning::缺少 update-darwin-universal.json（更新签名被跳过？）：这个版本装不上自动更新"
           fi
           {
             echo "- 版本：v${NUMBER}"
             echo "- 架构：universal（arm64 + amd64 同一产物）"
             echo "- 签名：ad-hoc，未经 Developer ID 签名与 notarize"
-            echo "- 文件：\`$(ls dist | tr '\n' ' ')\`"
+            echo "- 文件：\`$(ls "$out" | tr '\n' ' ')\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload workflow artifacts
@@ -195,16 +196,16 @@ jobs:
           name: "${{ env.APP_NAME }} ${{ steps.version.outputs.tag }}"
           prerelease: auto
           files: |
-            dist/*.zip
-            dist/*.dmg
-            dist/update-*.json
-            dist/*.delta
+            dist/darwin-universal/*.tar.gz
+            dist/darwin-universal/*.dmg
+            dist/darwin-universal/update-*.json
+            dist/darwin-universal/*.delta
           body: |
             ## 安装
-            1. 下载 `.dmg`（拖进 Applications）或 `.zip`：`ditto -x -k <zip 文件名> /Applications`。
+            1. 下载 `.dmg`（拖进 Applications）或 `pinnote-<版本>-darwin-universal.tar.gz`：`tar -xzf <tar.gz 文件名> -C /Applications`。
             2. 构建使用 ad-hoc 签名，未经 Apple notarize，首次打开会被 Gatekeeper 拦下：**右键 → 打开** 确认一次即可；若仍被拒：
                `xattr -dr com.apple.quarantine /Applications/PinNote.app`
             3. universal 产物在 Apple Silicon 与 Intel 上通用；装好之后应用内会自己检查并升级到更新的 release
-               （`update-darwin-*.json` 清单带 ed25519 签名，客户端只装验得过签名的包）。
+               （`update-darwin-universal.json` 清单带 ed25519 签名，客户端只装验得过签名的包）。
 
             需要 Developer ID 签名 + notarize，要先配证书与 notary API 凭据（mygo build 同样支持）。
