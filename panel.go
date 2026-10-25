@@ -52,13 +52,9 @@ func noteExcerpt(content string, max int) string {
 
 // Panel is the tray panel window.
 type Panel struct {
-	app *pinApp
-	win *mygo.Window
-
-	// confirmDeleteID is the note a row's delete button asked about; the
-	// dialog stays open until it is answered or dismissed.
-	confirmDeleteID string
-	confirmDelete   bool
+	app     *pinApp
+	win     *mygo.Window
+	confirm confirmAsk // a row delete's second confirmation (issue #10)
 }
 
 func (p *Panel) view(c *ui.Context) {
@@ -77,7 +73,6 @@ func (p *Panel) view(c *ui.Context) {
 				}
 			})
 		})
-		p.deleteDialog(c, t)
 	})
 }
 
@@ -109,39 +104,27 @@ func (p *Panel) row(c *ui.Context, t *ui.Theme, n Note) {
 		})
 		// The engine hands a click to the innermost interactive element, so
 		// this button never fires the row's open action (issue #6).
-		if ui.Button(c, "").Label("删除笔记 " + title).MinWidth(24).Height(22).Children(func() {
+		b := ui.Button(c, "").Label("删除笔记 " + title).MinWidth(24).Height(22).Children(func() {
 			ui.Icon(c, trashIcon).FontSize(13)
-		}).Clicked() {
-			p.confirmDeleteID = n.ID
-			p.confirmDelete = true
+		})
+		if b.Clicked() {
+			p.confirm.open(b.Bounds(), "删除笔记「"+clampRunes(title, 20)+"」？",
+				"删除后进入回收站保留 60 天，到期自动清除，可从托盘回收站恢复。", "删除", func() {
+					if _, err := p.app.notes.TrashNote(n.ID); err != nil {
+						log.Printf("trash note from panel: %v", err)
+					}
+				})
 		}
 	})
 }
 
-// deleteDialog is a row delete button's second confirmation (issue #6). The
-// panel stays open afterwards: deleting is not a jump into a note.
-func (p *Panel) deleteDialog(c *ui.Context, t *ui.Theme) {
-	ui.Modal(c, &p.confirmDelete, func() {
-		title := "无标题笔记"
-		if n, ok := p.app.liveNote(p.confirmDeleteID); ok && n.Title != "" {
-			title = n.Title
-		}
-		ui.Column(c).Width(300).Gap(10).Children(func() {
-			ui.Text(c, "删除笔记「"+clampRunes(title, 20)+"」？").FontSize(13).Bold()
-			ui.Text(c, "删除后进入回收站保留 60 天，到期自动清除；回收站没有恢复入口。").FontSize(12).TextColor(t.TextMuted)
-			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-				if ui.Button(c, "取消").Clicked() {
-					p.confirmDelete = false
-				}
-				if ui.Button(c, "删除").TextColor(t.Danger).Clicked() {
-					p.confirmDelete = false
-					if _, err := p.app.notes.TrashNote(p.confirmDeleteID); err != nil {
-						log.Printf("trash note from panel: %v", err)
-					}
-				}
-			})
-		})
-	})
+func (p *Panel) Hide() {
+	// The confirm flyout holds the panel up: asking must not collapse the
+	// list it is asking about (its window takes the panel's keyboard).
+	if p.confirm.active {
+		return
+	}
+	p.win.Hide()
 }
 
 // focusOrCreate focuses a note's pin window (creating the note when id is
@@ -154,8 +137,6 @@ func (p *Panel) focusOrCreate(id string) {
 	}
 	p.Hide()
 }
-
-func (p *Panel) Hide() { p.win.Hide() }
 
 func clampRunes(s string, max int) string {
 	runes := []rune(s)

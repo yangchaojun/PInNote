@@ -17,10 +17,9 @@ import (
 
 // TrashPanel is the trash index window.
 type TrashPanel struct {
-	app *pinApp
-	win *mygo.Window
-
-	confirmEmpty bool // the 清空回收站 button's confirmation dialog
+	app     *pinApp
+	win     *mygo.Window
+	confirm confirmAsk // the 清空回收站 button's second confirmation (issue #10)
 }
 
 // trashDaysLeft reports how many whole days remain before the startup purge
@@ -41,8 +40,15 @@ func (p *TrashPanel) view(c *ui.Context) {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Text(c, "回收站").FontSize(13).Bold().Grow(1)
 			if len(trash) > 0 {
-				if ui.Button(c, "清空回收站").FontSize(11).Height(22).TextColor(t.Danger).Clicked() {
-					p.confirmEmpty = true
+				b := ui.Button(c, "清空回收站").FontSize(11).Height(22).TextColor(t.Danger)
+				if b.Clicked() {
+					count := len(trash)
+					p.confirm.open(b.Bounds(), "清空回收站？",
+						"将永久删除全部 "+fmt.Sprint(count)+" 条笔记，此操作不可恢复。", "清空", func() {
+							if err := p.app.notes.EmptyTrash(); err != nil {
+								log.Printf("empty trash: %v", err)
+							}
+						})
 				}
 			}
 		})
@@ -57,7 +63,6 @@ func (p *TrashPanel) view(c *ui.Context) {
 				}
 			})
 		})
-		p.emptyDialog(c, t)
 	})
 }
 
@@ -116,27 +121,10 @@ func (p *TrashPanel) restore(id string) {
 	}
 }
 
-// emptyDialog is 清空回收站's second confirmation: emptying is a bulk
-// permanent delete with no undo.
-func (p *TrashPanel) emptyDialog(c *ui.Context, t *ui.Theme) {
-	ui.Modal(c, &p.confirmEmpty, func() {
-		count := len(p.app.trashCache)
-		ui.Column(c).Width(300).Gap(10).Children(func() {
-			ui.Text(c, "清空回收站？").FontSize(13).Bold()
-			ui.Text(c, "将永久删除全部 "+fmt.Sprint(count)+" 条笔记，此操作不可恢复。").FontSize(12).TextColor(t.TextMuted)
-			ui.Row(c).Gap(8).Justify(ui.End).Children(func() {
-				if ui.Button(c, "取消").Clicked() {
-					p.confirmEmpty = false
-				}
-				if ui.Button(c, "清空").TextColor(t.Danger).Clicked() {
-					p.confirmEmpty = false
-					if err := p.app.notes.EmptyTrash(); err != nil {
-						log.Printf("empty trash: %v", err)
-					}
-				}
-			})
-		})
-	})
+func (p *TrashPanel) Hide() {
+	// The confirm flyout holds the panel up, as the notes panel's does.
+	if p.confirm.active {
+		return
+	}
+	p.win.Hide()
 }
-
-func (p *TrashPanel) Hide() { p.win.Hide() }
