@@ -259,6 +259,47 @@ func TestRestoreLatestNoteWindowNoNotes(t *testing.T) {
 	}
 }
 
+func TestEmptyTrash(t *testing.T) {
+	s := newTestService(t)
+	trashed1, _ := s.CreateNote("甲")
+	trashed2, _ := s.CreateNote("乙")
+	live, _ := s.CreateNote("丙")
+	for _, id := range []string{trashed1.ID, trashed2.ID} {
+		if _, err := s.TrashNote(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := s.EmptyTrash(); err != nil {
+		t.Fatalf("empty trash: %v", err)
+	}
+	if got, _ := s.ListTrash(); len(got) != 0 {
+		t.Errorf("trash = %v, want empty", got)
+	}
+	// Only the trash is emptied; live notes stay.
+	if list, _ := s.ListNotes(); len(list) != 1 || list[0].ID != live.ID {
+		t.Errorf("live list = %v, want only %s", list, live.ID)
+	}
+}
+
+func TestTrashDaysLeft(t *testing.T) {
+	now := time.Now().Unix()
+	cases := []struct {
+		deletedAt  int64
+		daysBehind int64
+	}{
+		{now, 60},
+		{now - 30*86400, 30},
+		{now - 59*86400, 1},
+		{now - 61*86400, 0},
+	}
+	for _, c := range cases {
+		if got := trashDaysLeft(c.deletedAt); got != c.daysBehind {
+			t.Errorf("trashDaysLeft(%d) = %d, want %d", c.deletedAt, got, c.daysBehind)
+		}
+	}
+}
+
 func TestThemePersistence(t *testing.T) {
 	db, err := openDBAt(":memory:")
 	if err != nil {

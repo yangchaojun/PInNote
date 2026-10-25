@@ -21,11 +21,11 @@ var trayIconColor []byte
 // setupTray creates the menu-bar status item — the resident app's visible
 // anchor and its mouse-side entry point. Left click summons the most
 // recently updated note (creating the first one when no note exists), the
-// context menu holds 新建笔记 / 显示笔记列表 / 检查更新 / 退出, and 显示笔记列表
-// opens the panel under the icon. The panel is an index, not a resident UI,
-// so it hides as soon as it loses focus. Updates are announced here rather
-// than in a window: with no resident UI, the menu bar is the only surface
-// that can say "there is a new version" (ADR-0003 D4).
+// context menu holds 新建笔记 / 显示笔记列表 / 回收站 / 检查更新 / 退出, and the
+// two index items open their panel under the icon. The panels are indexes,
+// not a resident UI, so each hides as soon as it loses focus. Updates are
+// announced here rather than in a window: with no resident UI, the menu bar
+// is the only surface that can say "there is a new version" (ADR-0003 D4).
 func setupTray(app *pinApp) {
 	panel := &Panel{app: app}
 	panel.win = mygo.NewWindow(mygo.WindowOptions{
@@ -53,6 +53,33 @@ func setupTray(app *pinApp) {
 	})
 	app.panel = panel
 
+	// The trash panel (issue #8) is the same kind of popover: an index of
+	// the 60-day recycle bin, not a resident UI.
+	trashPanel := &TrashPanel{app: app}
+	trashPanel.win = mygo.NewWindow(mygo.WindowOptions{
+		Title:             "PinNote",
+		Width:             300,
+		Height:            380,
+		Hidden:            true,
+		Frameless:         true,
+		DisableResize:     true,
+		DisableMinimize:   true,
+		DisableMaximize:   true,
+		DisableFullScreen: true,
+		AlwaysOnTop:       true,
+		SkipTaskbar:       true,
+		Content:           ui.View(trashPanel.view),
+	})
+	trashPanel.win.SetVisibleOnAllWorkspaces(true)
+	trashPanel.win.OnBlur(trashPanel.Hide)
+	trashPanel.win.OnClose(func(e *mygo.CloseEvent) {
+		if !app.quitting {
+			e.PreventDefault()
+			trashPanel.Hide()
+		}
+	})
+	app.trash = trashPanel
+
 	tray, err := mygo.NewTray(mygo.TrayOptions{
 		Icon:           trayIcon,
 		IconIsTemplate: runtime.GOOS == "darwin",
@@ -63,11 +90,21 @@ func setupTray(app *pinApp) {
 		return
 	}
 
-	showPanel := func() { showPanelAtTray(panel, tray) }
+	// One popover at a time: opening either index hides the other, so the
+	// tray never stacks two panels under the icon.
+	showPanel := func() {
+		trashPanel.Hide()
+		showWindowAtTray(panel.win, tray)
+	}
+	showTrash := func() {
+		panel.Hide()
+		showWindowAtTray(trashPanel.win, tray)
+	}
 
 	menu := mygo.NewMenu([]*mygo.MenuItem{
 		{Label: "新建笔记", Click: func(*mygo.MenuItem, *mygo.Window) { app.newNote() }},
 		{Label: "显示笔记列表", Click: func(*mygo.MenuItem, *mygo.Window) { showPanel() }},
+		{Label: "回收站", Click: func(*mygo.MenuItem, *mygo.Window) { showTrash() }},
 		mygo.Separator(),
 		// Update entries sit between the note actions and 退出 because the
 		// tray is the only place a pin-only app can announce a release
@@ -86,6 +123,7 @@ func setupTray(app *pinApp) {
 		tray.OnClick(app.summonLatest)
 		tray.OnRightClick(func() {
 			panel.Hide()
+			trashPanel.Hide()
 			tray.SetMenu(menu)
 			defer tray.SetMenu(nil)
 			tray.PopUpMenu()
@@ -101,18 +139,18 @@ func setupTray(app *pinApp) {
 	refreshTray(tray, checkItem, applyItem, app.updates.Status())
 }
 
-// showPanelAtTray places the panel under the tray icon on its display and
-// shows it focused.
-func showPanelAtTray(panel *Panel, tray *mygo.Tray) {
+// showWindowAtTray places a panel window under the tray icon on its display
+// and shows it focused.
+func showWindowAtTray(win *mygo.Window, tray *mygo.Tray) {
 	anchor := tray.Bounds()
 	if anchor.Width == 0 || anchor.Height == 0 {
-		panel.win.Center()
+		win.Center()
 	} else {
 		area := mygo.Screen.DisplayNearestPoint(mygo.Point{
 			X: anchor.X + anchor.Width/2,
 			Y: anchor.Y + anchor.Height/2,
 		}).WorkArea
-		b := panel.win.Bounds()
+		b := win.Bounds()
 		x := anchor.X + (anchor.Width-b.Width)/2
 		y := anchor.Y + anchor.Height + 6
 		if y+b.Height > area.Y+area.Height {
@@ -120,10 +158,10 @@ func showPanelAtTray(panel *Panel, tray *mygo.Tray) {
 		}
 		x = max(area.X, min(x, area.X+max(0, area.Width-b.Width)))
 		y = max(area.Y, min(y, area.Y+max(0, area.Height-b.Height)))
-		panel.win.SetPosition(x, y)
+		win.SetPosition(x, y)
 	}
-	panel.win.Show()
-	panel.win.Focus()
+	win.Show()
+	win.Focus()
 }
 
 // refreshTray mirrors the updater onto the two surfaces a pin-only app has:

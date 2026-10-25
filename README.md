@@ -8,8 +8,8 @@
 - **自动保存**：编辑 400ms 后自动落库；窗口失焦立即保存；关窗/删除/更新前强制 flush。`note.content` 是 Markdown 事实源，每次保存经过 round-trip 守卫（serialize→重开→文档相等），不能无损往返的内容（HTML 块、表格、链接定义等）以源码形式的 raw 块原样保留，零静默丢失。
 - **启动恢复**：关窗只是收起（Stickies 式）；重启后只恢复**最新一条**笔记的窗口，其余 live 笔记经托盘「显示笔记列表」按需打开，主题保持一致。
 - **空笔记硬删**：从未输入过内容的窗口关闭即删除记录，不进回收站。
-- **回收站**：`⌘⌫` 或删除按钮（pin 窗口右上角 / 笔记列表 item，均二次确认）删除的笔记保留 **60 天**（无 UI），启动时自动清除过期笔记。
-- **驻留与托盘**：所有窗口关闭后应用仍在后台运行；菜单栏图钉图标是驻留态的可见锚点——左键直接唤起**最新笔记**（一条笔记都没有时就地新建一条），右键开托盘菜单（新建笔记 / 显示笔记列表 / 检查更新 / 退出）；「显示笔记列表」打开轻量索引面板，列出全部 live 笔记，点一条即聚焦其窗口并收起，失焦自动收起。
+- **回收站**：`⌘⌫` 或删除按钮（pin 窗口右上角 / 笔记列表 item，均二次确认）删除的笔记保留 **60 天**，可从托盘「回收站」恢复或清空，到期自动清除。
+- **驻留与托盘**：所有窗口关闭后应用仍在后台运行；菜单栏图钉图标是驻留态的可见锚点——左键直接唤起**最新笔记**（一条笔记都没有时就地新建一条），右键开托盘菜单（新建笔记 / 显示笔记列表 / 回收站 / 检查更新 / 退出）；「显示笔记列表」打开轻量索引面板，列出全部 live 笔记，点一条即聚焦其窗口并收起，失焦自动收起；「回收站」打开回收站面板，逐条恢复（连 pin 窗口一起回来）或二次确认后清空。
 
 ## 快捷键
 
@@ -23,7 +23,7 @@
 | `Esc` | 关闭帮助模态框 | pin 窗口内 |
 | 单击图钉图标 | 唤起最新笔记（无笔记则新建） | 菜单栏 |
 
-应用菜单栏（PinNote）提供 新建笔记 / 删除当前笔记 / 切换主题 兜底项；托盘右键菜单提供 新建笔记 / 显示笔记列表 / 检查更新 / 退出。
+应用菜单栏（PinNote）提供 新建笔记 / 删除当前笔记 / 切换主题 兜底项；托盘右键菜单提供 新建笔记 / 显示笔记列表 / 回收站 / 检查更新 / 退出。
 
 ## 开发
 
@@ -84,9 +84,10 @@ Secret 缺失时发版流水线**直接失败**：production 构建拒绝任何�
 - `pin_window.go` — pin 窗口（`PinWindow.tsx` + `PinEditor.tsx` 的移植）：无边框置顶跨 Space、头部拖拽区（标题 tooltip）+ 删除（二次确认）/ × 收起、整窗 richtext 编辑器、⌘⌫ 删除、⌘⇧/ 帮助模态、⌘K 链接模态、400ms 防抖自动保存、失焦 flush、空笔记硬删、被删占位态（「该笔记已被删除。」）。
 - `markdown_audit.go` — 无损装载 + 保存守卫（`lib/audit.ts` 的 Go 移植）：块级审计（解析器 kind 白名单 → 非空 → 序列化不动点 + 文档相等），不安全的块降级为逐行 raw 段落原样写回；代码块语言经 Tag 保留；`GuardSaveRoundTrip` 拒写任何无法重开的序列化。
 - `panel.go` — 托盘面板（`TrayPanel.tsx` 移植）：live 笔记列表（首行标题 + 摘要）、空态新建、点击聚焦收起。
-- `tray.go` — 菜单栏状态项：模板图标/彩色角标、左键唤起最新、右键菜单、更新入口两个菜单项、面板定位到图标下方。
+- `trash_panel.go` — 回收站面板：60 天保留区索引（删除时间 + 剩余天数）、逐条恢复（恢复后自动开 pin 窗口）、二次确认后清空回收站。
+- `tray.go` — 菜单栏状态项：模板图标/彩色角标、左键唤起最新、右键菜单、更新入口两个菜单项、两个索引面板定位到图标下方。
 - `window_service.go` — pin 窗口注册表与主题单一事实源（settings 表 + `mygo.Theme.SetSource` 全窗同帧切换）。
-- `db.go` / `note_service.go` — SQLite（`modernc.org/sqlite`，纯 Go 无 CGO）：`notes`/`settings` 两表，数据存于 `~/Library/Application Support/PinNote/pinnote.db`；笔记 CRUD、`deriveTitle`、`DiscardIfEmpty`、回收站 purge；`SetPinned`/`RestoreNote`/`DeleteNoteForever`/`EmptyTrash` 为冻结 API（数据兼容保留）。
+- `db.go` / `note_service.go` — SQLite（`modernc.org/sqlite`，纯 Go 无 CGO）：`notes`/`settings` 两表，数据存于 `~/Library/Application Support/PinNote/pinnote.db`；笔记 CRUD、`deriveTitle`、`DiscardIfEmpty`、回收站恢复/清空/purge；`SetPinned`/`DeleteNoteForever` 为冻结 API（数据兼容保留）。
 - `update_service.go` — 自动更新（ADR-0003 的 mygo 移植）：后台只 `mygo.Updater.Check`（45s 首查 + 12h±15min 节奏，命中只亮托盘角标）、手动检查先 `FlushAll` 再开框架卡片、退出时同步 flush + 空笔记清理（编辑器同进程，屏障即一次同步调用）。
 - `markdown_audit_test.go` — Markdown 往返语料网（TipTap 时代 51 条语料的移植，按 richtext 契约校准）：安全子集不动点、危险语法逐字节保留、规范化明确断言、空段/尾随段不卡保存、checkbox 写回、raw 块转换。
 
