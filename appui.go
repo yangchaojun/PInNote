@@ -17,6 +17,8 @@ type pinApp struct {
 	updates *UpdateService
 	panel   *Panel
 	trash   *TrashPanel
+	search  *SearchPanel
+	tray    *mygo.Tray // anchors every index panel under the menu-bar icon
 
 	// notesCache mirrors the live notes (updated_at desc) for the panel and
 	// the pin windows; trashCache mirrors the trashed notes (deleted_at
@@ -70,6 +72,54 @@ func (a *pinApp) refreshNotes() {
 	if a.trash != nil {
 		a.trash.win.Update(func() {})
 	}
+	if a.search != nil {
+		// An open search panel keeps matching the same query as the notes
+		// change under it (a note saved in a pin window, one trashed).
+		a.search.win.Update(a.search.reload)
+	}
+}
+
+// hideIndexPanels hides every index panel but keep, so the tray never stacks
+// two popovers under the icon and ⌘⇧F never opens over the list it was
+// called from.
+func (a *pinApp) hideIndexPanels(keep *mygo.Window) {
+	if a.panel != nil && a.panel.win != keep {
+		a.panel.Hide()
+	}
+	if a.trash != nil && a.trash.win != keep {
+		a.trash.Hide()
+	}
+	if a.search != nil && a.search.win != keep {
+		a.search.Hide()
+	}
+}
+
+// ShowNotesPanel opens 显示笔记列表 under the tray icon.
+func (a *pinApp) ShowNotesPanel() {
+	if a.panel == nil {
+		return
+	}
+	a.hideIndexPanels(a.panel.win)
+	showWindowAtTray(a.panel.win, a.tray)
+}
+
+// ShowTrashPanel opens 回收站 under the tray icon.
+func (a *pinApp) ShowTrashPanel() {
+	if a.trash == nil {
+		return
+	}
+	a.hideIndexPanels(a.trash.win)
+	showWindowAtTray(a.trash.win, a.tray)
+}
+
+// ShowSearch opens the ⌘⇧F search panel, empty and ready to type.
+func (a *pinApp) ShowSearch() {
+	if a.search == nil {
+		return
+	}
+	a.hideIndexPanels(a.search.win)
+	a.search.present()
+	showWindowAtTray(a.search.win, a.tray)
 }
 
 // liveNote returns the cached live note with the given id.

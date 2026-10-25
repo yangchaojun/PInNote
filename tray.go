@@ -21,8 +21,8 @@ var trayIconColor []byte
 // setupTray creates the menu-bar status item — the resident app's visible
 // anchor and its mouse-side entry point. Left click summons the most
 // recently updated note (creating the first one when no note exists), the
-// context menu holds 新建笔记 / 显示笔记列表 / 回收站 / 检查更新 / 退出, and the
-// two index items open their panel under the icon. The panels are indexes,
+// context menu holds 新建笔记 / 显示笔记列表 / 搜索笔记 / 回收站 / 检查更新 / 退出, and the
+// three index items open their panel under the icon. The panels are indexes,
 // not a resident UI, so each hides as soon as it loses focus. Updates are
 // announced here rather than in a window: with no resident UI, the menu bar
 // is the only surface that can say "there is a new version" (ADR-0003 D4).
@@ -82,6 +82,33 @@ func setupTray(app *pinApp) {
 	trashPanel.confirm.parent = trashPanel.win
 	app.trash = trashPanel
 
+	// The search panel (issue #12) is a third popover of the same kind: the
+	// index you can type into, from ⌘⇧F or the tray menu.
+	searchPanel := &SearchPanel{app: app}
+	searchPanel.win = mygo.NewWindow(mygo.WindowOptions{
+		Title:             "PinNote",
+		Width:             300,
+		Height:            380,
+		Hidden:            true,
+		Frameless:         true,
+		DisableResize:     true,
+		DisableMinimize:   true,
+		DisableMaximize:   true,
+		DisableFullScreen: true,
+		AlwaysOnTop:       true,
+		SkipTaskbar:       true,
+		Content:           ui.View(searchPanel.view),
+	})
+	searchPanel.win.SetVisibleOnAllWorkspaces(true)
+	searchPanel.win.OnBlur(searchPanel.Hide)
+	searchPanel.win.OnClose(func(e *mygo.CloseEvent) {
+		if !app.quitting {
+			e.PreventDefault()
+			searchPanel.Hide()
+		}
+	})
+	app.search = searchPanel
+
 	tray, err := mygo.NewTray(mygo.TrayOptions{
 		Icon:           trayIcon,
 		IconIsTemplate: runtime.GOOS == "darwin",
@@ -92,21 +119,14 @@ func setupTray(app *pinApp) {
 		return
 	}
 
-	// One popover at a time: opening either index hides the other, so the
+	// One popover at a time: opening any index hides the others, so the
 	// tray never stacks two panels under the icon.
-	showPanel := func() {
-		trashPanel.Hide()
-		showWindowAtTray(panel.win, tray)
-	}
-	showTrash := func() {
-		panel.Hide()
-		showWindowAtTray(trashPanel.win, tray)
-	}
-
+	app.tray = tray
 	menu := mygo.NewMenu([]*mygo.MenuItem{
 		{Label: "新建笔记", Click: func(*mygo.MenuItem, *mygo.Window) { app.newNote() }},
-		{Label: "显示笔记列表", Click: func(*mygo.MenuItem, *mygo.Window) { showPanel() }},
-		{Label: "回收站", Click: func(*mygo.MenuItem, *mygo.Window) { showTrash() }},
+		{Label: "显示笔记列表", Click: func(*mygo.MenuItem, *mygo.Window) { app.ShowNotesPanel() }},
+		{Label: "搜索笔记", Accelerator: "CmdOrCtrl+Shift+F", Click: func(*mygo.MenuItem, *mygo.Window) { app.ShowSearch() }},
+		{Label: "回收站", Click: func(*mygo.MenuItem, *mygo.Window) { app.ShowTrashPanel() }},
 		mygo.Separator(),
 		// Update entries sit between the note actions and 退出 because the
 		// tray is the only place a pin-only app can announce a release
@@ -124,8 +144,7 @@ func setupTray(app *pinApp) {
 		// the menu for the popup only, so left clicks keep summoning.
 		tray.OnClick(app.summonLatest)
 		tray.OnRightClick(func() {
-			panel.Hide()
-			trashPanel.Hide()
+			app.hideIndexPanels(nil)
 			tray.SetMenu(menu)
 			defer tray.SetMenu(nil)
 			tray.PopUpMenu()
@@ -144,6 +163,14 @@ func setupTray(app *pinApp) {
 // showWindowAtTray places a panel window under the tray icon on its display
 // and shows it focused.
 func showWindowAtTray(win *mygo.Window, tray *mygo.Tray) {
+	if tray == nil {
+		// No menu-bar icon (the tray could not be created): a centered
+		// panel still does the job.
+		win.Center()
+		win.Show()
+		win.Focus()
+		return
+	}
 	anchor := tray.Bounds()
 	if anchor.Width == 0 || anchor.Height == 0 {
 		win.Center()

@@ -336,3 +336,114 @@ func TestThemePersistence(t *testing.T) {
 		t.Errorf("theme should be unchanged after invalid set")
 	}
 }
+
+// SearchNotes backs ⌘⇧F (issue #12): a literal, live-notes-only match over
+// title and content.
+func TestSearchNotes(t *testing.T) {
+	s := newTestService(t)
+
+	// Empty corpus: no rows, no error.
+	if got, err := s.SearchNotes("会议"); err != nil || len(got) != 0 {
+		t.Fatalf("search on empty db = %v, %v; want none", got, err)
+	}
+
+	meeting, _ := s.CreateNote("# 会议记录\n\n讨论了排期")
+	other, _ := s.CreateNote("购物清单\n\n牛奶、鸡蛋")
+	// updated_at has second resolution; backdate the meeting note so the
+	// ordering assertions below are about rank, not insert order.
+	if _, err := s.db.Exec(`UPDATE notes SET updated_at = updated_at - 60 WHERE id = ?`, meeting.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name  string
+		query string
+		want  []string // ids, in order
+	}{
+		{"title hit", "会议", []string{meeting.ID}},
+		{"content hit", "鸡蛋", []string{other.ID}},
+		{"body text of the first note", "排期", []string{meeting.ID}},
+		{"trimmed query", "  购物  ", []string{other.ID}},
+		{"no match", "不存在的词", nil},
+		// An empty query is the unfiltered index: newest first.
+		{"empty query is list notes", "", []string{other.ID, meeting.ID}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := s.SearchNotes(tc.query)
+			if err != nil {
+				t.Fatalf("SearchNotes(%q): %v", tc.query, err)
+			}
+			var ids []string
+			for _, n := range got {
+				ids = append(ids, n.ID)
+			}
+			if len(ids) != len(tc.want) {
+				t.Fatalf("SearchNotes(%q) = %v, want %v", tc.query, ids, tc.want)
+			}
+			for i := range ids {
+				if ids[i] != tc.want[i] {
+					t.Fatalf("SearchNotes(%q) = %v, want %v", tc.query, ids, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// A typed % or _ is a character, not a wildcard: ESCAPE '\' plus escaping.
+func TestSearchNotesEscapesWildcards(t *testing.T) {
+	s := newTestService(t)
+	pct, _ := s.CreateNote("完成度 100% 的项目")
+	und, _ := s.CreateNote("snake_case 命名")
+	plain, _ := s.CreateNote("普通笔记")
+
+	if got, _ := s.SearchNotes("%"); len(got) != 1 || got[0].ID != pct.ID {
+		t.Errorf("search for %% = %v, want only the 100%% note", got)
+	}
+	if got, _ := s.SearchNotes("_"); len(got) != 1 || got[0].ID != und.ID {
+		t.Errorf("search for _ = %v, want only the snake_case note", got)
+	}
+	if got, _ := s.SearchNotes("\\"); len(got) != 0 {
+		t.Errorf("search for \\ = %v, want none", got)
+	}
+	if got, _ := s.SearchNotes("普通"); len(got) != 1 || got[0].ID != plain.ID {
+		t.Errorf("search for 普通 = %v, want the plain note", got)
+	}
+}
+
+// The trash is not searched, and a title hit outranks a content hit.
+func TestSearchNotesOnlyLiveAndTitleFirst(t *testing.T) {
+	s := newTestService(t)
+	body, _ := s.CreateNote("周报\n\n下周要跟进的项目若干")
+	title, _ := s.CreateNote("项目周报")
+	trashed, _ := s.CreateNote("项目归档")
+	if _, err := s.TrashNote(trashed.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.SearchNotes("项目")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("search 项目 = %v, want the two live notes", got)
+	}
+	if got[0].ID != title.ID || got[1].ID != body.ID {
+		t.Errorf("search 项目 order = %v, %v; want title hit first", got[0].ID, got[1].ID)
+	}
+}
+
+func TestEscapeLike(t *testing.T) {
+	cases := map[string]string{
+		"plain": `plain`,
+		"100%":  `100\%`,
+		"a_b":   `a\_b`,
+		`a\b`:   `a\\b`,
+		`%_\`:   `\%\_\\`,
+	}
+	for in, want := range cases {
+		if got := escapeLike(in); got != want {
+			t.Errorf("escapeLike(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

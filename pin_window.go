@@ -406,6 +406,7 @@ func (p *PinWindow) helpDialog(c *ui.Context, t *ui.Theme) {
 			ui.Divider(c)
 			for _, row := range [][2]string{
 				{"⌘⌥N", "新建笔记并打开 pin 窗口（全局，任何应用下可用）"},
+				{"⌘⇧F", "搜索笔记（全局）：输入过滤，↑↓ 选择，↵ 打开"},
 				{"⌘B / ⌘I / ⌘K", "粗体 / 斜体 / 链接"},
 				{"⌘⇧D", "切换亮/暗主题（所有窗口同时生效）"},
 				{"⌘⌫", "删除当前笔记（进回收站）并关窗"},
