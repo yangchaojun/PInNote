@@ -167,6 +167,41 @@ func (s *NoteService) ListNotes() ([]Note, error) {
 	return collectNotes(rows)
 }
 
+// SearchNotes returns the live notes whose title or content matches query,
+// title hits first, most recently updated within each group. An empty query
+// is ListNotes.
+//
+// The full scan is deliberate: notes are a local, personal corpus, and one
+// LIKE pass keeps the schema and the markdown fact source untouched. Reach
+// for FTS only if a real corpus makes this measurably slow.
+func (s *NoteService) SearchNotes(query string) ([]Note, error) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return s.ListNotes()
+	}
+	// ESCAPE '\' makes a typed % or _ a literal instead of a wildcard.
+	pattern := "%" + escapeLike(q) + "%"
+	rows, err := s.db.Query(
+		`SELECT `+noteColumns+` FROM notes
+		 WHERE deleted_at IS NULL
+		   AND (title LIKE ? ESCAPE '\' OR content LIKE ? ESCAPE '\')
+		 ORDER BY pinned DESC,
+		          CASE WHEN title LIKE ? ESCAPE '\' THEN 0 ELSE 1 END,
+		          updated_at DESC`,
+		pattern, pattern, pattern)
+	if err != nil {
+		return nil, fmt.Errorf("search notes: %w", err)
+	}
+	defer rows.Close()
+	return collectNotes(rows)
+}
+
+// escapeLike makes a user's query literal for LIKE: % and _ are wildcards
+// there, and the escape character itself must be escaped first.
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
 // latestLiveNote returns the most recently updated live note, or nil when
 // there are none — the menu bar icon's "get back to my notes" lookup. Kept
 // unexported so the bound service API stays the frontend's only read path.

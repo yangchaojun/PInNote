@@ -61,6 +61,7 @@ func main() {
 			{Role: mygo.RoleEditMenu},
 			{Label: "PinNote", Submenu: []*mygo.MenuItem{
 				{Label: "新建笔记", Accelerator: "CmdOrCtrl+Option+N", Click: func(*mygo.MenuItem, *mygo.Window) { app.newNote() }},
+				{Label: "搜索笔记", Accelerator: "CmdOrCtrl+Shift+F", Click: func(*mygo.MenuItem, *mygo.Window) { app.ShowSearch() }},
 				{Label: "删除当前笔记", Accelerator: "CmdOrCtrl+Backspace", Click: func(*mygo.MenuItem, *mygo.Window) {
 					app.windows.RequestFrontmostDelete()
 				}},
@@ -78,6 +79,10 @@ func main() {
 		// Global shortcut: summon a fresh pin window from anywhere.
 		if err := mygo.GlobalShortcut.Register("CmdOrCtrl+Option+N", app.newNote); err != nil {
 			log.Printf("register global shortcut: %v", err)
+		}
+		// ⌘⇧F: the keyboard way back to an old note from anywhere (issue #12).
+		if err := mygo.GlobalShortcut.Register("CmdOrCtrl+Shift+F", app.ShowSearch); err != nil {
+			log.Printf("register search shortcut: %v", err)
 		}
 
 		setupTray(app)
