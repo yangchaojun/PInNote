@@ -1,7 +1,7 @@
 {
   "name": "PinNote",
   "identifier": "com.pinnote.app",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "icon": "resources/icon.png",
   "updates": {
     "github": "yangchaojun/PInNote",
