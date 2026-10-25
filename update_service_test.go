@@ -1,132 +1,75 @@
 package main
 
 import (
-	"context"
-	"io"
+	"strings"
 	"testing"
-
-	"github.com/wailsapp/wails/v3/pkg/updater"
+	"time"
 )
 
-// stubProvider answers with a fixed release, fresh per call because the
-// Updater decorates the one it is given.
-type stubProvider struct{ release *updater.Release }
-
-func (p *stubProvider) Name() string { return "stub" }
-
-func (p *stubProvider) Check(context.Context, updater.CheckRequest) (*updater.Release, error) {
-	if p.release == nil {
-		return nil, nil
-	}
-	copied := *p.release
-	return &copied, nil
-}
-
-func (p *stubProvider) Download(context.Context, *updater.Release, io.Writer, func(written, total int64)) error {
-	return nil
-}
-
-type silentHost struct{ quit int }
-
-func (h *silentHost) Emit(string, ...any) bool         { return false }
-func (h *silentHost) OnEvent(string, func(any)) func() { return func() {} }
-func (h *silentHost) OpenWindow(updater.WindowOptions) updater.WindowHandle {
-	return nil
-}
-func (h *silentHost) Quit() { h.quit++ }
-
-func newTestUpdateService(t *testing.T) *UpdateService {
+func newUpdateServiceForTest(t *testing.T) *UpdateService {
 	t.Helper()
 	db, err := openDBAt(":memory:")
 	if err != nil {
 		t.Fatalf("open in-memory db: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
-	return NewUpdateService(&appHandle{}, db, nil)
+	t.Cleanup(func() { db.Close() })
+	return NewUpdateService(db, nil)
 }
 
-// The persisted Skip choice only protects a relaunch if feeding it back into
-// Updater.SkipVersion actually suppresses the release. That half belongs to
-// the framework, so pin the behaviour rather than assume it.
-func TestSkippedVersionMakesCheckReportUpToDate(t *testing.T) {
-	u := updater.New(&silentHost{})
-	if err := u.Init(updater.Config{
-		CurrentVersion: "0.1.0",
-		Providers:      []updater.Provider{&stubProvider{release: &updater.Release{Version: "0.2.0"}}},
-		Window:         updater.WindowNone,
-	}); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-	u.SkipVersion("0.2.0")
-	rel, err := u.Check(context.Background())
-	if err != nil {
-		t.Fatalf("check: %v", err)
-	}
-	if rel != nil {
-		t.Errorf("check found %+v, want the skipped version suppressed", rel)
-	}
-	if got := u.State(); got != updater.StateUpToDate {
-		t.Errorf("state = %q, want %q", got, updater.StateUpToDate)
-	}
-}
-
-func TestSkipCurrentReleasePersistsVersion(t *testing.T) {
-	s := newTestUpdateService(t)
-	s.setState(stateAvailable, &updater.Release{Version: "0.2.0"}, "")
-	s.skipCurrentRelease()
-
-	stored, ok, err := getSetting(s.db, settingSkippedVersion)
-	if err != nil || !ok {
-		t.Fatalf("read skipped version: %v, %v", err, ok)
-	}
-	if stored != "0.2.0" {
-		t.Errorf("skipped version = %q, want 0.2.0", stored)
-	}
-}
-
-// Without a tracked release there is nothing to skip, and writing an empty
-// value would silently clear the user's earlier choice.
-func TestSkipCurrentReleaseWithoutReleaseKeepsStoredValue(t *testing.T) {
-	s := newTestUpdateService(t)
-	if err := setSetting(s.db, settingSkippedVersion, "0.1.5"); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	s.skipCurrentRelease()
-	stored, _, err := getSetting(s.db, settingSkippedVersion)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
-	if stored != "0.1.5" {
-		t.Errorf("skipped version = %q, want the previous 0.1.5", stored)
-	}
-}
-
-func TestStatusTracksPendingRelease(t *testing.T) {
-	s := newTestUpdateService(t)
-	if got := s.Status().Version; got != "" {
-		t.Errorf("initial version = %q, want empty", got)
-	}
-	s.setState(stateAvailable, &updater.Release{Version: "0.2.0"}, "")
-	// The tray still names the version while the download is in flight.
-	s.setState(stateDownloading, nil, "")
+// A test binary is a dev build, so the guard must say no and say why — a
+// wrong answer here is a broken release path that only shows up on someone
+// else's machine.
+func TestUpdateGuardDevBuild(t *testing.T) {
+	s := newUpdateServiceForTest(t)
 	st := s.Status()
-	if st.Version != "0.2.0" || st.State != stateDownloading {
-		t.Errorf("status = %+v, want 0.2.0 downloading", st)
+	if st.CanSelfUpdate {
+		t.Error("dev build must not self-update")
+	}
+	if st.GuardReason == "" {
+		t.Error("a rejected guard must carry its reason")
+	}
+	if st.State != stateIdle {
+		t.Errorf("state = %q, want idle before Start", st.State)
+	}
+
+	// The background loop never opens anything and never reaches the
+	// network when the guard said no.
+	s.checkInBackground()
+	if st = s.Status(); st.State != stateIdle {
+		t.Errorf("state after guarded check = %q, want idle", st.State)
 	}
 }
 
-func TestRecordCheckedAtPublishesStatus(t *testing.T) {
-	s := newTestUpdateService(t)
-	var last UpdateStatus
-	seen := make(chan UpdateStatus, 1)
-	s.OnStatusChanged(func(st UpdateStatus) { seen <- st })
-	s.recordCheckedAt()
-	select {
-	case last = <-seen:
-	default:
-		t.Fatal("status callback not fired after recording the check")
+func TestStatusCarriesLastCheckedAt(t *testing.T) {
+	s := newUpdateServiceForTest(t)
+	stamp := "2026-01-02T15:04:05Z"
+	if err := setSetting(s.db, settingLastCheckedAt, stamp); err != nil {
+		t.Fatalf("write setting: %v", err)
 	}
-	if last.LastCheckedAt == "" {
-		t.Errorf("last checked at empty")
+	if st := s.Status(); st.LastCheckedAt != stamp {
+		t.Errorf("LastCheckedAt = %q, want %q", st.LastCheckedAt, stamp)
+	}
+}
+
+func TestRecordCheckedAtStamps(t *testing.T) {
+	s := newUpdateServiceForTest(t)
+	s.recordCheckedAt()
+	st := s.Status()
+	if st.LastCheckedAt == "" {
+		t.Fatal("LastCheckedAt empty after recordCheckedAt")
+	}
+	at, err := time.Parse(time.RFC3339, st.LastCheckedAt)
+	if err != nil {
+		t.Fatalf("LastCheckedAt not RFC3339: %v", err)
+	}
+	if time.Since(at) > time.Minute {
+		t.Errorf("LastCheckedAt %v is stale", at)
+	}
+}
+
+func TestGuardReasonMentionsDev(t *testing.T) {
+	s := newUpdateServiceForTest(t)
+	if !strings.Contains(s.Status().GuardReason, "开发构建") {
+		t.Errorf("dev guard reason = %q, want it to name the dev build", s.Status().GuardReason)
 	}
 }

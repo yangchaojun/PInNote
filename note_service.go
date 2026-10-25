@@ -29,19 +29,19 @@ type Note struct {
 	UpdatedAt int64  `json:"updatedAt"`
 }
 
-// NoteService exposes note persistence to the frontend via Wails bindings.
+// NoteService owns note persistence. Mutations report through onChange so the
+// shared UI state (panel cache, pin windows) refreshes on the main thread.
 type NoteService struct {
-	app *appHandle
-	db  *sql.DB
+	onChange func()
+	db       *sql.DB
 }
 
 func NewNoteService(db *sql.DB) *NoteService {
 	return &NoteService{db: db}
 }
 
-// SetApp wires the application handle after application.New so that the
-// service can broadcast change events to every window.
-func (s *NoteService) SetApp(a *appHandle) { s.app = a }
+// SetOnChange wires the refresh callback once the app state exists.
+func (s *NoteService) SetOnChange(fn func()) { s.onChange = fn }
 
 // deriveTitle returns the first non-empty line of the content, stripped of
 // markdown decoration, truncated to a reasonable length, so the pin window's
@@ -368,10 +368,9 @@ func (s *NoteService) PurgeExpiredTrash() (int64, error) {
 // itself still drives the startup purge.
 func (s *NoteService) GetTrashRetentionDays() int64 { return TrashRetentionDays }
 
-// notifyChanged broadcasts a lightweight event so every window (main + pinned)
-// refreshes its queries.
+// notifyChanged refreshes the shared UI state after any mutation.
 func (s *NoteService) notifyChanged() {
-	if s.app != nil {
-		s.app.emit("notes:changed", nil)
+	if s.onChange != nil {
+		s.onChange()
 	}
 }

@@ -1,10 +1,15 @@
 package main
 
-// Version is the version of this build. Release packaging injects it with
-// `-ldflags -X main.Version=<number>` (build/darwin/Taskfile.yml), fed from
-// the same value CI writes into Info.plist, so the binary and the bundle can
-// never disagree about which release they are (ADR-0003 B3).
-//
-// The default is also a sentinel: "dev" means not a release, which disables
-// self-update (ADR-0003 D8).
-var Version = "dev"
+import "github.com/egoist/mygo"
+
+// appVersion is the version of this build. `mygo build` links the config's
+// version into the app; anything else (go build, go run, mygo dev) means
+// "not a release", which the self-update guard treats as dev.
+func appVersion() string {
+	switch v := mygo.App.Version(); v {
+	case "", "dev", "(devel)":
+		return "dev"
+	default:
+		return v
+	}
+}

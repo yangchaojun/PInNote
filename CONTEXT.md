@@ -37,11 +37,11 @@ _Avoid_: 托盘模式、悬浮球
 _Avoid_: 主菜单、应用菜单（指 menu.go 的应用菜单时）
 
 **更新卡片**:
-托盘「检查更新」弹出的系统式更新窗口，由 Wails 框架自带（只改配色与文案覆写），承载 检查中 / 已最新 / 有新版 / 下载进度 / 待重启 / 出错 六个态与 Install、Skip、Remind later、Cancel、Restart & Apply 全套动作。应用不自建更新界面——pin-only 形态没有可挂横幅的主界面。
+托盘「检查更新」弹出的系统式更新窗口，由 mygo 框架自带（native 更新卡片插件），承载 检查中 / 已最新 / 有新版 / 下载进度 / 待重启 / 出错 六个态与 Install、Skip、Remind later、Cancel、Restart & Apply 全套动作。应用不自建更新界面——pin-only 形态没有可挂横幅的主界面。
 _Avoid_: 更新窗口（易与 pin 窗口混称）、升级对话框
 
 **落库屏障**:
-换包重启前的一道确认：Go 侧广播 `pin:flush-requested`，每个 Pin 窗口先把编辑器缓冲写回数据库再回执 `pin:flushed`；只要有一个窗口报脏或没回执，本轮更新直接作废。因为框架卡片的「Restart & Apply」无法被后端否决，屏障必须抢在下载/解包阶段做完。
+换包重启前的一道确认：编辑器与 Go 同进程，`WindowService.FlushAll` 在主线程同步把每个 Pin 窗口的缓冲写回数据库；任何重启路径（含更新卡片的「Restart & Apply」）都会先经过退出钩子里的这道同步屏障。
 _Avoid_: 保存检查、预检
 
 **托盘面板**:

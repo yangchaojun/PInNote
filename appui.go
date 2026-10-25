@@ -1,0 +1,105 @@
+package main
+
+import (
+	"database/sql"
+	"log"
+
+	"github.com/egoist/mygo"
+)
+
+// pinApp is the shared state of the running app. Every mutation happens on
+// the main thread (view callbacks, tray and menu callbacks) or hops to it
+// (RunOnMain), so the caches below need no locks of their own.
+type pinApp struct {
+	db      *sql.DB
+	notes   *NoteService
+	windows *WindowService
+	updates *UpdateService
+	panel   *Panel
+
+	// notesCache mirrors the live notes (updated_at desc) for the panel and
+	// the pin windows; trashSet holds the ids currently in the trash so a
+	// window can show its deleted-note placeholder instead of vanishing.
+	notesCache []Note
+	trashSet   map[string]bool
+
+	// quitting is set by OnBeforeQuit so window close handlers let the
+	// app-quit close pass through without their collapse flows.
+	quitting bool
+}
+
+// wire connects the services to the shared state. Call once before the app
+// is ready; onChange may fire from any goroutine, so it hops to the main
+// thread.
+func (a *pinApp) wire() {
+	a.notes.SetOnChange(func() {
+		mygo.RunOnMain(a.refreshNotes)
+	})
+}
+
+// refreshNotes reloads the caches and syncs every window with them. Main
+// thread only.
+func (a *pinApp) refreshNotes() {
+	list, err := a.notes.ListNotes()
+	if err != nil {
+		log.Printf("list notes: %v", err)
+		return
+	}
+	a.notesCache = list
+
+	trash, err := a.notes.ListTrash()
+	if err != nil {
+		log.Printf("list trash: %v", err)
+		return
+	}
+	a.trashSet = map[string]bool{}
+	for _, n := range trash {
+		a.trashSet[n.ID] = true
+	}
+
+	for _, p := range a.windows.pins {
+		p.syncWithCaches()
+	}
+	if a.panel != nil {
+		a.panel.win.Update(func() {})
+	}
+}
+
+// liveNote returns the cached live note with the given id.
+func (a *pinApp) liveNote(id string) (Note, bool) {
+	for _, n := range a.notesCache {
+		if n.ID == id {
+			return n, true
+		}
+	}
+	return Note{}, false
+}
+
+// newNote creates a note and opens its pin window — the ⌘⌥N flow.
+func (a *pinApp) newNote() {
+	note, err := a.notes.CreateNote("")
+	if err != nil {
+		log.Printf("create note: %v", err)
+		return
+	}
+	if _, err := a.windows.OpenPinnedWindow(note.ID); err != nil {
+		log.Printf("open pin window: %v", err)
+	}
+}
+
+// summonLatest focuses the most recently updated note, creating the first
+// note when the desktop has none — the tray icon's left click.
+func (a *pinApp) summonLatest() {
+	latest, err := a.notes.latestLiveNote()
+	if err != nil {
+		log.Printf("summon latest note: %v", err)
+		return
+	}
+	if latest == nil {
+		a.newNote()
+		return
+	}
+	if _, err := a.windows.OpenPinnedWindow(latest.ID); err != nil {
+		log.Printf("summon latest note: %v", err)
+	}
+}
