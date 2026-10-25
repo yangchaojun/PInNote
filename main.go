@@ -1,20 +1,17 @@
 package main
 
+// PinNote — 打开即写、自动保存、启动恢复的桌面便签。每条笔记就是一个
+// 常驻桌面的 pin 窗口：无边框、置顶、跨 Space，没有主面板（ADR-0001）。
+// Native UI 形态：mygo 绘制的纯 Go 界面，无 webview、无前端构建。
+
 import (
-	"embed"
 	"log"
 	"runtime"
 
-	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/egoist/mygo"
+	updaterui "github.com/egoist/mygo/plugins/updater"
+	nativeui "github.com/egoist/mygo/plugins/updater/native"
 )
-
-// Wails uses Go's `embed` package to embed the frontend files into the binary.
-// Any files in the frontend/dist folder will be embedded into the binary and
-// made available to the frontend.
-// See https://pkg.go.dev/embed for more information.
-
-//go:embed all:frontend/dist
-var assets embed.FS
 
 func main() {
 	db, err := openDB()
@@ -23,123 +20,83 @@ func main() {
 	}
 	defer db.Close()
 
-	handle := &appHandle{}
-	noteService := NewNoteService(db)
-	windowService := NewWindowService(handle, db)
-	updateService := NewUpdateService(handle, db, windowService)
+	app := &pinApp{db: db}
+	app.notes = NewNoteService(db)
+	app.windows = NewWindowService(db)
+	app.updates = NewUpdateService(db, app.windows)
+	app.windows.SetApp(app)
+	app.wire()
 
-	app := application.New(application.Options{
-		Name:        "PinNote",
-		Description: "打开即写、自动保存、启动恢复的桌面便签",
-		Services: []application.Service{
-			application.NewService(noteService),
-			application.NewService(windowService),
-		},
-		Assets: application.AssetOptions{
-			Handler: application.AssetFileServerFS(assets),
-		},
-		Mac: application.MacOptions{
-			// Keep running when all pin windows are closed so notes stay
-			// reachable via the global shortcut; the menu bar allows quitting.
-			ApplicationShouldTerminateAfterLastWindowClosed: false,
-		},
-	})
-	handle.app = app
-	noteService.SetApp(handle)
+	// The framework update card, in native UI so no webview rides along.
+	// Automatic checks stay off: our own loop drives the tray badge and
+	// never opens anything on its own (ADR-0003 D2).
+	mygo.Use(nativeui.New(updaterui.Options{DisableAutomaticChecks: true}))
 
-	// The flush barrier answers pin:flushed on the app bus, and the updater
-	// needs the app instance to attach to, so both wire up here rather than in
-	// their constructors (ADR-0003 D7).
-	windowService.startFlushListener()
-	if err := updateService.Configure(app); err != nil {
-		log.Printf("configure updater: %v", err)
-	}
-	updateService.Start()
-	defer updateService.Stop()
+	// Keep running when all pin windows are closed so notes stay reachable
+	// via the global shortcut; the menu bar allows quitting.
+	mygo.App.OnWindowAllClosed(func() {})
 
-	// Every live note gets a desktop pin window on startup; the main panel is
-	// gone (ADR-0001) and ⌘⌥N is the only way to create a note.
-	newNote := func() {
-		note, err := noteService.CreateNote("")
-		if err != nil {
-			log.Printf("create note: %v", err)
-			return
-		}
-		if _, err := windowService.OpenPinnedWindow(note.ID); err != nil {
-			log.Printf("open pin window: %v", err)
-		}
-	}
-
-	// Menu-bar fallbacks for the keyboard-first flows (spec §4.4). On macOS
-	// the AppMenu role must come first (it provides the standard application
-	// menu with Quit), and the fallback actions live in a submenu — menu bar
-	// entries are submenus; AppKit drops leaf items. EditMenu is required:
-	// ⌘V/⌘C/⌘X in the webviews are dispatched through the menu's paste:/copy:
-	// selectors, and without it every clipboard shortcut silently dies.
-	menu := application.NewMenu()
-	if runtime.GOOS == "darwin" {
-		menu.AddRole(application.AppMenu)
-		menu.AddRole(application.EditMenu)
-	}
-	actions := menu.AddSubmenu("PinNote")
-	actions.Add("新建笔记").SetAccelerator("CmdOrCtrl+Option+N").OnClick(func(*application.Context) { newNote() })
-	actions.Add("删除当前笔记").SetAccelerator("CmdOrCtrl+Backspace").OnClick(func(*application.Context) {
-		if err := windowService.RequestFrontmostDelete(); err != nil {
-			log.Printf("request frontmost delete: %v", err)
+	mygo.App.OnBeforeQuit(func(*mygo.QuitEvent) { app.quitting = true })
+	// 退出收尾 (§5.2): flush every editor, then apply the empty-note rule —
+	// a never-typed note is deleted rather than left as clutter. The editors
+	// live in this process, so this synchronous pass is the whole barrier.
+	mygo.App.OnWillQuit(func(*mygo.QuitEvent) {
+		app.windows.FlushAll()
+		for _, id := range app.windows.livePinNoteIDs() {
+			if _, err := app.notes.DiscardIfEmpty(id); err != nil {
+				log.Printf("discard empty note on quit: %v", err)
+			}
 		}
 	})
-	actions.Add("切换主题").SetAccelerator("CmdOrCtrl+Shift+D").OnClick(func(*application.Context) {
-		next := "light"
-		if windowService.Theme() == "light" {
-			next = "dark"
+
+	mygo.App.WhenReady(func() {
+		app.windows.ApplyTheme()
+		app.refreshNotes()
+
+		// Menu-bar fallbacks for the keyboard-first flows (spec §4.4). On
+		// macOS the AppMenu role must come first; EditMenu carries the
+		// clipboard shortcuts into the editor.
+		menu := mygo.NewMenu([]*mygo.MenuItem{
+			{Role: mygo.RoleAppMenu},
+			{Role: mygo.RoleEditMenu},
+			{Label: "PinNote", Submenu: []*mygo.MenuItem{
+				{Label: "新建笔记", Accelerator: "CmdOrCtrl+Option+N", Click: func(*mygo.MenuItem, *mygo.Window) { app.newNote() }},
+				{Label: "删除当前笔记", Accelerator: "CmdOrCtrl+Backspace", Click: func(*mygo.MenuItem, *mygo.Window) {
+					app.windows.RequestFrontmostDelete()
+				}},
+				{Label: "切换主题", Accelerator: "CmdOrCtrl+Shift+D", Click: func(*mygo.MenuItem, *mygo.Window) {
+					app.windows.ToggleTheme()
+				}},
+			}},
+		})
+		if runtime.GOOS != "darwin" {
+			menu.Append(mygo.Separator())
+			menu.Append(&mygo.MenuItem{Label: "退出", Click: func(*mygo.MenuItem, *mygo.Window) { mygo.App.Quit() }})
 		}
-		if err := windowService.SetTheme(next); err != nil {
-			log.Printf("switch theme from menu: %v", err)
+		mygo.App.SetMenu(menu)
+
+		// Global shortcut: summon a fresh pin window from anywhere.
+		if err := mygo.GlobalShortcut.Register("CmdOrCtrl+Option+N", app.newNote); err != nil {
+			log.Printf("register global shortcut: %v", err)
 		}
+
+		setupTray(app)
+
+		// Permanently remove notes whose 60-day trash window has expired.
+		if purged, err := app.notes.PurgeExpiredTrash(); err != nil {
+			log.Printf("purge expired trash: %v", err)
+		} else if purged > 0 {
+			log.Printf("purged %d expired note(s) from trash", purged)
+		}
+
+		// Restore a window for every live note from the previous session.
+		RestoreAllNoteWindows(app.notes, app.windows)
+
+		app.updates.Start()
+		defer app.updates.Stop()
 	})
-	if runtime.GOOS != "darwin" {
-		menu.AddSeparator()
-		menu.Add("退出").OnClick(func(*application.Context) { app.Quit() })
-	}
-	app.Menu.SetApplicationMenu(menu)
 
-	// Global shortcut: summon a fresh pin window from anywhere.
-	if err := app.GlobalShortcut.Register("CmdOrCtrl+Option+N", newNote); err != nil {
-		log.Printf("register global shortcut: %v", err)
-	}
-
-	// Left click on the menu bar icon is the mouse-side way back into a
-	// resident app: focus the most recently updated note, creating the first
-	// note when the desktop has none. The context menu's 显示笔记列表 covers the
-	// "show me the whole index" case instead.
-	summonLatest := func() {
-		latest, err := noteService.latestLiveNote()
-		if err != nil {
-			log.Printf("summon latest note: %v", err)
-			return
-		}
-		if latest == nil {
-			newNote()
-			return
-		}
-		if _, err := windowService.OpenPinnedWindow(latest.ID); err != nil {
-			log.Printf("summon latest note: %v", err)
-		}
-	}
-	setupTray(app, windowService.pinBackground(), newNote, summonLatest, updateService)
-
-	// Permanently remove notes whose 60-day trash window has expired.
-	if purged, err := noteService.PurgeExpiredTrash(); err != nil {
-		log.Printf("purge expired trash: %v", err)
-	} else if purged > 0 {
-		log.Printf("purged %d expired note(s) from trash", purged)
-	}
-
-	// Restore a window for every live note from the previous session.
-	RestoreAllNoteWindows(noteService, windowService)
-
-	err = app.Run()
-	if err != nil {
+	if err := mygo.App.Run(); err != nil {
 		log.Fatal(err)
 	}
 }

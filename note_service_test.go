@@ -267,22 +267,24 @@ func TestThemePersistence(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 
 	// Default is dark when nothing has been persisted.
-	w := NewWindowService(&appHandle{}, db)
-	if w.GetTheme() != "dark" {
-		t.Errorf("default theme = %q, want dark", w.GetTheme())
+	w := NewWindowService(db)
+	w.applyTheme = func(string) {} // no running app in tests
+	if w.Theme() != "dark" {
+		t.Errorf("default theme = %q, want dark", w.Theme())
 	}
 
-	// SetTheme persists (works without a running app) and is read back by a
-	// fresh service — the Go side is the single source of truth.
+	// SetTheme persists and is read back by a fresh service — the Go side
+	// is the single source of truth.
 	if err := w.SetTheme("light"); err != nil {
 		t.Fatalf("set theme: %v", err)
 	}
 	if w.Theme() != "light" {
 		t.Errorf("in-memory theme = %q, want light", w.Theme())
 	}
-	reopened := NewWindowService(&appHandle{}, db)
-	if reopened.GetTheme() != "light" {
-		t.Errorf("persisted theme = %q, want light", reopened.GetTheme())
+	reopened := NewWindowService(db)
+	reopened.applyTheme = func(string) {}
+	if reopened.Theme() != "light" {
+		t.Errorf("persisted theme = %q, want light", reopened.Theme())
 	}
 
 	// Invalid values are rejected and change nothing.

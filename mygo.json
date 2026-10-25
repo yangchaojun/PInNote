@@ -1,0 +1,10 @@
+{
+  "name": "PinNote",
+  "identifier": "com.pinnote.app",
+  "version": "0.1.0",
+  "icon": "resources/icon.png",
+  "updates": {
+    "github": "yangchaojun/PInNote",
+    "publicKey": "JDrt7PiifDV3ya57HyaehL/XtGJcAe4jPXdyq15ePkU="
+  }
+}

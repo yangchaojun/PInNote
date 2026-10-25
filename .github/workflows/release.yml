@@ -4,8 +4,9 @@ name: Release
 # workflow_dispatch 只构建并上传产物，不发 release，用来验证流水线。
 #
 # 只有 macOS：pin-only 形态依赖 NSStatusItem 与原生 frame resize，Windows/Linux 出界。
-# 产物：bin/PinNote.app -> universal .zip（自更新唯一入口）+ .dmg（wails3 样式化，失败则回退 hdiutil）
-# 详见 docs/adr/0003-auto-update.md：zip 必须是「唯一一个顶层条目」，且要配 .sig 才能被客户端装上。
+# 产物（dist/）：universal .zip + .dmg + update-darwin-{arm64,amd64}.json（自更新清单，
+# 含 ed25519 签名，由 mygo build 用 MYGO_UPDATER_PRIVATE_KEY 签出）+ 差量包。
+# 自更新只信编译期钉死在 mygo.json updates.publicKey 的公钥（ADR-0003 D5/D6 延续）。
 on:
   push:
     tags:
@@ -13,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "写入构建的版本号（不带 v）。留空则用 Info.plist 的 CFBundleShortVersionString"
+        description: "写入构建的版本号（不带 v）。留空则用 mygo.json 的 version"
         required: false
         type: string
 
@@ -26,8 +27,8 @@ concurrency:
 
 env:
   APP_NAME: PinNote
-  # 必须与 go.mod 里的 github.com/wailsapp/wails/v3 版本一致，否则 CI 与本地打包器行为漂移。
-  WAILS_CLI_VERSION: v3.0.0-beta.16
+  # 必须与 go.mod 里 mygo 的版本一致，否则 CI 与本地构建行为漂移。
+  MYGO_VERSION: v0.6.3
 
 jobs:
   release:
@@ -41,23 +42,13 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      # setup-go 不保证 GOPATH/bin 在 PATH 上，wails3 装在那里。
-      - name: Put Go bin on PATH
-        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
       - name: Resolve version
         id: version
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          plist_version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" build/darwin/Info.plist)
+          config_version=$(python3 -c 'import json; print(json.load(open("mygo.json"))["version"])')
           number="$INPUT_VERSION"
           publish=false
           case "$GITHUB_REF" in
@@ -70,13 +61,13 @@ jobs:
               publish=true
               ;;
           esac
-          number="${number:-$plist_version}"
+          number="${number:-$config_version}"
           case "$number" in
             [0-9]*.[0-9]*) ;;
             *) echo "::error::version '${number}' 不符合 x.y.z"; exit 1 ;;
           esac
-          if [ "$number" != "$plist_version" ]; then
-            echo "::notice::版本 ${number} 与 build/darwin/Info.plist 的 ${plist_version} 不一致，产物按 ${number} 写入"
+          if [ "$number" != "$config_version" ]; then
+            echo "::notice::版本 ${number} 与 mygo.json 的 ${config_version} 不一致，产物按 ${number} 写入"
           fi
           {
             echo "tag=v${number}"
@@ -84,133 +75,108 @@ jobs:
             echo "publish=${publish}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@"$WAILS_CLI_VERSION"
-
-      # 顺序有讲究：main.go 的 //go:embed all:frontend/dist 要求 dist 先存在，
-      # 否则 go vet / go test 在干净检出下直接编译失败。
-      - name: Test and build frontend
+      - name: Test
         run: |
           set -euo pipefail
-          cd frontend
-          npm ci
-          npm test
-          npm run build
+          go vet .
+          go test -count=1 .
 
-      - name: Test Go
-        run: |
-          set -euo pipefail
-          go vet . ./tools/...
-          go test -count=1 . ./tools/...
-
-      - name: Stamp version into the bundle
+      # 单一版本事实源：同一个 number 写进 mygo.json，mygo build 会把它注入
+      # bundle 的 Info.plist 与更新清单（ADR-0003 B3 的 mygo 形态）。
+      - name: Stamp version into the config
         env:
           NUMBER: ${{ steps.version.outputs.number }}
         run: |
           set -euo pipefail
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $NUMBER" build/darwin/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $NUMBER" build/darwin/Info.plist
+          python3 - "$NUMBER" <<'PY'
+          import json, sys
+          number = sys.argv[1]
+          with open("mygo.json") as f:
+              config = json.load(f)
+          config["version"] = number
+          with open("mygo.json", "w") as f:
+              json.dump(config, f, indent=2, ensure_ascii=False)
+              f.write("\n")
+          PY
 
-      # 单一版本事实源：同一个 number 既写进 plist 又注入 main.Version（ADR-0003 B3）。
-      # universal 而不是 uname -m：一条 release 一个主产物，Intel 与 Apple Silicon 共用，
-      # 否则 amd64 用户永远匹配不到 asset（B4）。
-      - name: Package
+      - name: Install mygo CLI
+        run: go install github.com/egoist/mygo/cmd/mygo@"$MYGO_VERSION"
+
+      # 自更新走 mygo build 的 ed25519 签名（对清单里每个产物）。
+      # 密钥对沿用 Wails 时代那对：Secret 里是 hex 私钥，这里转成 mygo 要的 base64。
+      # Secret 缺失时 tag 构建直接失败——production 构建拒绝任何验不了的产物（ADR-0003 D6）。
+      - name: Convert update signing key
+        id: key
         env:
-          PINNOTE_VERSION: ${{ steps.version.outputs.number }}
-        run: wails3 task darwin:package:universal
+          PINNOTE_UPDATE_KEY: ${{ secrets.PINNOTE_UPDATE_KEY }}
+          PUBLISH: ${{ steps.version.outputs.publish }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PINNOTE_UPDATE_KEY}" ]; then
+            if [ "$PUBLISH" = "true" ]; then
+              echo "::error::缺少 Secret PINNOTE_UPDATE_KEY：发版必须带更新签名私钥"
+              exit 1
+            fi
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf %s "$PINNOTE_UPDATE_KEY" | xxd -r -p | base64 > /tmp/mygo-update-key.b64
+          # 公钥与 mygo.json 对齐：对不上等于「所有客户端从此收不到更新」，
+          # 而报错完全指不到真正的原因，所以在这里就拦住。
+          expected=$(python3 -c 'import json; print(json.load(open("mygo.json"))["updates"]["publicKey"])')
+          actual=$(python3 -c '
+          import base64, hashlib, struct
+          raw = open("/tmp/mygo-update-key.b64","rb").read()
+          # ed25519 私钥 64 字节：后 32 字节即公钥
+          priv = base64.b64decode(raw)
+          print(base64.b64encode(priv[32:]).decode())')
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::Secret PINNOTE_UPDATE_KEY 与 mygo.json updates.publicKey 不是同一对密钥"
+            exit 1
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      # universal 而不是 uname -m：一条 release 一个主产物，Intel 与 Apple Silicon 共用，
+      # 否则 amd64 用户永远匹配不到清单（B4 的 mygo 形态：每个 target 一份 update-*.json）。
+      - name: Build
+        run: |
+          set -euo pipefail
+          if [ -f /tmp/mygo-update-key.b64 ]; then
+            export MYGO_UPDATER_PRIVATE_KEY="$(cat /tmp/mygo-update-key.b64)"
+          fi
+          "$(go env GOPATH)/bin/mygo" build -platform darwin/universal
 
       # 换包后 LaunchServices 按 CFBundleExecutable 找入口；这里指错就等于
       # 「更新完成，双击打不开」，必须在发版前拦住（ADR-0003 B2）。
-      - name: Verify bundle entry point
-        run: |
-          set -euo pipefail
-          entry=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "bin/${APP_NAME}.app/Contents/Info.plist")
-          test -x "bin/${APP_NAME}.app/Contents/MacOS/${entry}" || {
-            echo "::error::CFBundleExecutable=${entry} 在 Contents/MacOS 里不存在或不可执行"
-            ls -la "bin/${APP_NAME}.app/Contents/MacOS"
-            exit 1
-          }
-          test "$(ls "bin/${APP_NAME}.app/Contents/MacOS" | wc -l | tr -d ' ')" = 1 || {
-            echo "::error::Contents/MacOS 里有多余文件，自更新换包后会留下错误的入口"
-            exit 1
-          }
-
-      - name: Verify code signature
-        run: codesign --verify --deep --strict --verbose=2 "bin/${APP_NAME}.app"
-
-      # 样式化 dmg 要挂盘并驱动 Finder 摆图标，无 GUI 会话时可能失败——回退成普通 dmg，
-      # 保证发版不被装饰拖住。
-      - name: Build dmg
-        run: |
-          set -euo pipefail
-          if wails3 task darwin:create:dmg; then
-            exit 0
-          fi
-          # hdiutil -ov 直接覆盖样式化尝试留下的半成品，无需先删。
-          echo "::warning::样式化 dmg 失败，回退 hdiutil"
-          staging=$(mktemp -d)
-          cp -R "bin/${APP_NAME}.app" "$staging/"
-          ln -s /Applications "$staging/Applications"
-          hdiutil create -volname "$APP_NAME" -srcfolder "$staging" -ov -format UDZO "bin/${APP_NAME}.dmg"
-          rm -rf "$staging"
-
-      - name: Check generated files are in sync
-        run: |
-          set -euo pipefail
-          # 构建会 go mod tidy + wails3 generate bindings；若结果与仓库不同，说明提交里缺了生成物。
-          if [ -n "$(git status --porcelain -- go.mod go.sum frontend/bindings)" ]; then
-            git status --porcelain -- go.mod go.sum frontend/bindings
-            echo "::warning::构建过程改写了 go.mod/go.sum 或 frontend/bindings，请在本地同步后重新提交"
-          fi
-
-      - name: Collect artifacts
+      - name: Verify bundle
         env:
           NUMBER: ${{ steps.version.outputs.number }}
         run: |
           set -euo pipefail
-          base="${APP_NAME}-${NUMBER}-macOS-universal"
-          mkdir -p dist
-          mv "bin/${APP_NAME}.dmg" "dist/${base}.dmg"
-          # --keepParent：zip 根目录必须是 PinNote.app 本身。
-          # 不能加 --sequesterRsrc：它会在根目录附带 __MACOSX/，而 updater 硬性要求
-          # 「恰好一个顶层条目」，多一条就直接拒绝解包（ADR-0003 B1）。
-          ditto -c -k --keepParent "bin/${APP_NAME}.app" "dist/${base}.zip"
-          roots=$(unzip -Z1 "dist/${base}.zip" | cut -d/ -f1 | sort -u)
-          if [ "$(printf '%s\n' "$roots" | wc -l | tr -d ' ')" != 1 ] || [ "$roots" != "${APP_NAME}.app" ]; then
-            echo "::error::zip 顶层不是唯一的 ${APP_NAME}.app，自更新无法解包：$(printf '%s ' $roots)"
+          app="dist/${APP_NAME}.app"
+          test -d "$app" || { ls -R dist | head -40; echo "::error::找不到 ${app}"; exit 1; }
+          entry=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "${app}/Contents/Info.plist")
+          test -x "${app}/Contents/MacOS/${entry}" || {
+            echo "::error::CFBundleExecutable=${entry} 在 Contents/MacOS 里不存在或不可执行"
             exit 1
+          }
+          codesign --verify --deep --strict --verbose=2 "$app"
+
+      - name: Summarize artifacts
+        env:
+          NUMBER: ${{ steps.version.outputs.number }}
+        run: |
+          set -euo pipefail
+          ls dist > /tmp/dist-list.txt
+          if ! grep -q "^update-darwin-arm64.json$" /tmp/dist-list.txt; then
+            echo "::warning::缺少 update-darwin-arm64.json（更新签名被跳过？）：这个版本装不上自动更新"
           fi
-          (cd dist && shasum -a 256 "${base}.zip" "${base}.dmg" > SHA256SUMS.txt)
           {
             echo "- 版本：v${NUMBER}"
             echo "- 架构：universal（arm64 + amd64 同一产物）"
             echo "- 签名：ad-hoc，未经 Developer ID 签名与 notarize"
-            echo "- 更新签名：\`${base}.zip.sig\` = 对 zip 的 sha256 摘要做 ed25519 签名"
-            echo "- 文件：\`$(cd dist && ls | tr '\n' ' ')\`"
+            echo "- 文件：\`$(ls dist | tr '\n' ' ')\`"
           } >> "$GITHUB_STEP_SUMMARY"
-
-      # 自更新走 Go 下载，不带 quarantine xattr，Gatekeeper 不会复核换包后的 bundle，
-      # 所以这把 ed25519 签名是唯一的信任根：缺它就没有自动更新（ADR-0003 D5/D6）。
-      - name: Sign release artifacts
-        env:
-          NUMBER: ${{ steps.version.outputs.number }}
-          PINNOTE_UPDATE_KEY: ${{ secrets.PINNOTE_UPDATE_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${PINNOTE_UPDATE_KEY}" ]; then
-            echo "::error::缺少 Secret PINNOTE_UPDATE_KEY：先 go run ./tools/sign-release keygen，私钥进 Secrets，公钥进 update_public_key.go"
-            exit 1
-          fi
-          # 公钥从源码里读，而不是再配一个地方：这两处一旦对不上，表现是
-          # 「所有客户端从此再也收不到更新」，而报错完全指不到真正的原因。
-          pubkey=$(sed -n 's/^const updatePublicKeyHex = "\(.*\)"$/\1/p' update_public_key.go)
-          if [ -z "$pubkey" ]; then
-            echo "::error::update_public_key.go 里还没有公钥，先粘贴 keygen 输出的公钥"
-            exit 1
-          fi
-          base="${APP_NAME}-${NUMBER}-macOS-universal"
-          go run ./tools/sign-release sign -key-env PINNOTE_UPDATE_KEY "dist/${base}.zip"
-          go run ./tools/sign-release verify -key "$pubkey" "dist/${base}.zip"
 
       - name: Upload workflow artifacts
         if: steps.version.outputs.publish != 'true'
@@ -220,6 +186,7 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+      # 自更新 feed 读 latest release 的 update-darwin-*.json；清单、zip、dmg、差量包一起上。
       - name: Publish GitHub Release
         if: steps.version.outputs.publish == 'true'
         uses: softprops/action-gh-release@v3
@@ -229,15 +196,15 @@ jobs:
           prerelease: auto
           files: |
             dist/*.zip
-            dist/*.zip.sig
             dist/*.dmg
-            dist/SHA256SUMS.txt
+            dist/update-*.json
+            dist/*.delta
           body: |
             ## 安装
             1. 下载 `.dmg`（拖进 Applications）或 `.zip`：`ditto -x -k <zip 文件名> /Applications`。
             2. 构建使用 ad-hoc 签名，未经 Apple notarize，首次打开会被 Gatekeeper 拦下：**右键 → 打开** 确认一次即可；若仍被拒：
                `xattr -dr com.apple.quarantine /Applications/PinNote.app`
-            3. 完整性校验：`shasum -a 256 -c SHA256SUMS.txt`。
-            4. universal 产物在 Apple Silicon 与 Intel 上通用；装好之后应用内会自己检查并升级到更新的 release。
+            3. universal 产物在 Apple Silicon 与 Intel 上通用；装好之后应用内会自己检查并升级到更新的 release
+               （`update-darwin-*.json` 清单带 ed25519 签名，客户端只装验得过签名的包）。
 
-            需要 Developer ID 签名 + notarize，要先配证书与 notary API 凭据，见 README 的「发版」章节。
+            需要 Developer ID 签名 + notarize，要先配证书与 notary API 凭据（mygo build 同样支持）。
