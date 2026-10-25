@@ -51,6 +51,7 @@ func setupTray(app *pinApp) {
 			panel.Hide()
 		}
 	})
+	panel.confirm.parent = panel.win
 	app.panel = panel
 
 	// The trash panel (issue #8) is the same kind of popover: an index of
@@ -78,6 +79,7 @@ func setupTray(app *pinApp) {
 			trashPanel.Hide()
 		}
 	})
+	trashPanel.confirm.parent = trashPanel.win
 	app.trash = trashPanel
 
 	tray, err := mygo.NewTray(mygo.TrayOptions{
