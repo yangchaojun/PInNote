@@ -54,6 +54,9 @@ func (p *SearchPanel) view(c *ui.Context) {
 	if c.Shortcut(0, ui.KeyEnter) {
 		p.openAt(p.chosen)
 	}
+	if c.Shortcut(0, ui.KeyEscape) {
+		p.Hide()
+	}
 
 	ui.Column(c).Fill().Background(t.Background).Children(func() {
 		ui.Row(c).Padding(10, 10, 6, 10).Gap(8).AlignItems(ui.Center).Children(func() {
