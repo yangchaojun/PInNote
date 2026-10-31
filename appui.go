@@ -118,8 +118,10 @@ func (a *pinApp) ShowSearch() {
 		return
 	}
 	a.hideIndexPanels(a.search.win)
-	a.search.present()
 	showWindowAtTray(a.search.win, a.tray)
+	// Focus after Show: mygo drops focus requests on hidden windows (see
+	// pin_window.go's show-then-focus precedent).
+	a.search.present()
 }
 
 // liveNote returns the cached live note with the given id.
